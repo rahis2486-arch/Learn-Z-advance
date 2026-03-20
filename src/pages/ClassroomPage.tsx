@@ -17,6 +17,8 @@ interface Course {
   title: string;
   description: string;
   thumbnail: string;
+  tags?: string[];
+  category?: string;
 }
 
 interface Lesson {
@@ -325,6 +327,16 @@ export default function ClassroomPage() {
             <span className="text-xs font-black uppercase tracking-widest">Course Content</span>
           </div>
           <h2 className="text-base font-semibold line-clamp-2">{course.title}</h2>
+          <div className="flex flex-wrap gap-1.5">
+            <span className="px-2 py-0.5 rounded-md bg-theme-accent/10 text-theme-accent text-[10px] font-black uppercase tracking-widest">
+              {course.category || "General"}
+            </span>
+            {course.tags?.map(tag => (
+              <span key={tag} className="px-2 py-0.5 rounded-md bg-theme-text/5 text-theme-text/40 text-[10px] font-bold">
+                #{tag}
+              </span>
+            ))}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">

@@ -6,7 +6,7 @@ import {
   FileText, Link as LinkIcon, ChevronRight,
   PlusCircle, CheckCircle2, Upload, Loader2,
   ChevronLeft, Users, Shield, UserX, UserCheck,
-  Search, Filter, MoreVertical, Building2
+  Search, Filter, MoreVertical, Building2, Tag
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../lib/utils";
@@ -29,6 +29,9 @@ interface Course {
   title: string;
   description: string;
   thumbnail: string;
+  duration?: string;
+  tags?: string[];
+  category?: string;
 }
 
 interface Lesson {
@@ -52,21 +55,96 @@ interface Institution {
   createdAt: string;
 }
 
+interface Category {
+  _id: string;
+  name: string;
+  description?: string;
+}
+
+const CategorySelect = ({ value, onChange, categories }: { value: string, onChange: (val: string) => void, categories: Category[] }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  
+  const filtered = categories.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
+  
+  return (
+    <div className="relative">
+      <div 
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full bg-theme-bg border border-theme-border rounded-xl p-4 flex items-center justify-between cursor-pointer"
+      >
+        <span className={value ? "text-theme-text" : "text-theme-text/40"}>
+          {value || "Select Category"}
+        </span>
+        <ChevronRight size={16} className={cn("transition-transform", isOpen && "rotate-90")} />
+      </div>
+      
+      {isOpen && (
+        <div className="absolute z-50 top-full left-0 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2">
+          <div className="p-2 border-b border-gray-100">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input 
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search categories..."
+                className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-100 rounded-lg text-sm text-black outline-none focus:ring-2 focus:ring-blue-500/20"
+                autoFocus
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+          </div>
+          <div className="max-h-60 overflow-y-auto p-1">
+            {filtered.length > 0 ? (
+              filtered.map(cat => (
+                <button
+                  key={cat._id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onChange(cat.name);
+                    setIsOpen(false);
+                    setSearch("");
+                  }}
+                  className={cn(
+                    "w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                    value === cat.name 
+                      ? "bg-blue-600 text-white" 
+                      : "text-gray-700 hover:bg-gray-100"
+                  )}
+                >
+                  {cat.name}
+                </button>
+              ))
+            ) : (
+              <div className="p-4 text-center text-gray-400 text-xs">No categories found</div>
+            )}
+          </div>
+        </div>
+      )}
+      
+      {isOpen && <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />}
+    </div>
+  );
+};
+
 export default function AdminPage() {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const { theme } = useAssistant();
-  const [activeTab, setActiveTab] = useState<"courses" | "users" | "institutions">("courses");
+  const [activeTab, setActiveTab] = useState<"courses" | "users" | "institutions" | "categories">("courses");
   const [courses, setCourses] = useState<Course[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedInstitution, setSelectedInstitution] = useState<Institution | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [loading, setLoading] = useState(true);
   
   const [isEditingCourse, setIsEditingCourse] = useState(false);
-  const [courseForm, setCourseForm] = useState({ title: "", description: "", thumbnail: "", duration: "" });
+  const [courseForm, setCourseForm] = useState({ title: "", description: "", thumbnail: "", duration: "", tags: "", category: "" });
   const [isUploading, setIsUploading] = useState(false);
 
   const [isEditingInstitution, setIsEditingInstitution] = useState(false);
@@ -77,6 +155,9 @@ export default function AdminPage() {
     allowedEmails: [] as string[]
   });
   const [emailInput, setEmailInput] = useState("");
+
+  const [isEditingCategory, setIsEditingCategory] = useState(false);
+  const [categoryForm, setCategoryForm] = useState({ name: "", description: "" });
   
   const [isEditingLesson, setIsEditingLesson] = useState(false);
   const [lessonForm, setLessonForm] = useState({
@@ -111,12 +192,78 @@ export default function AdminPage() {
   useEffect(() => {
     if (activeTab === "courses") {
       fetchCourses();
+      fetchCategories();
     } else if (activeTab === "users") {
       fetchUsers();
     } else if (activeTab === "institutions") {
       fetchInstitutions();
+    } else if (activeTab === "categories") {
+      fetchCategories();
     }
   }, [activeTab]);
+
+  const fetchCategories = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch("/api/categories");
+      const data = await res.json();
+      setCategories(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveCategory = async () => {
+    try {
+      const method = selectedCategory ? "PUT" : "POST";
+      const url = selectedCategory ? `/api/categories/${selectedCategory._id}` : "/api/categories";
+      
+      const res = await fetch(url, {
+        method,
+        headers: { 
+          "Content-Type": "application/json",
+          "x-user-uid": currentUser?.uid || ""
+        },
+        body: JSON.stringify(categoryForm),
+      });
+      
+      if (res.ok) {
+        fetchCategories();
+        setIsEditingCategory(false);
+        setSelectedCategory(null);
+        setCategoryForm({ name: "", description: "" });
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to save category");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Category",
+      message: "Are you sure you want to delete this category? This will not delete courses in this category, but they will lose their category association.",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/categories/${id}`, { 
+            method: "DELETE",
+            headers: { "x-user-uid": currentUser?.uid || "" }
+          });
+          if (res.ok) {
+            fetchCategories();
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    });
+  };
 
   const fetchInstitutions = async () => {
     try {
@@ -283,11 +430,11 @@ export default function AdminPage() {
 
   const fetchCourses = async () => {
     try {
-      const res = await fetch("/api/courses", {
+      const res = await fetch("/api/courses?limit=100", {
         headers: { "x-user-uid": currentUser?.uid || "" }
       });
       const data = await res.json();
-      setCourses(data);
+      setCourses(data.courses || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -342,13 +489,16 @@ export default function AdminPage() {
           "Content-Type": "application/json",
           "x-user-uid": currentUser?.uid || ""
         },
-        body: JSON.stringify(courseForm),
+        body: JSON.stringify({
+          ...courseForm,
+          tags: courseForm.tags.split(",").map(t => t.trim()).filter(Boolean)
+        }),
       });
       
       if (res.ok) {
         fetchCourses();
         setIsEditingCourse(false);
-        setCourseForm({ title: "", description: "", thumbnail: "", duration: "" });
+        setCourseForm({ title: "", description: "", thumbnail: "", duration: "", tags: "", category: "" });
       }
     } catch (err) {
       console.error(err);
@@ -497,6 +647,16 @@ export default function AdminPage() {
             <Building2 size={18} />
             <span className="font-bold text-sm">Institution Management</span>
           </button>
+          <button 
+            onClick={() => setActiveTab("categories")}
+            className={cn(
+              "w-full flex items-center gap-3 p-3 rounded-xl transition-all",
+              activeTab === "categories" ? "bg-theme-accent/10 text-theme-accent" : "text-theme-text/40 hover:bg-theme-text/5"
+            )}
+          >
+            <Tag size={18} />
+            <span className="font-bold text-sm">Category Management</span>
+          </button>
         </div>
 
         {activeTab === "courses" && (
@@ -507,7 +667,7 @@ export default function AdminPage() {
                 onClick={() => {
                   setIsEditingCourse(true);
                   setSelectedCourse(null);
-                  setCourseForm({ title: "", description: "", thumbnail: "", duration: "" });
+                  setCourseForm({ title: "", description: "", thumbnail: "", duration: "", tags: "", category: "" });
                 }}
                 className="p-1.5 hover:bg-theme-accent/10 rounded-lg text-theme-accent transition-colors"
               >
@@ -515,7 +675,7 @@ export default function AdminPage() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              {courses.map(course => (
+              {Array.isArray(courses) && courses.map(course => (
                 <button
                   key={course._id}
                   onClick={() => setSelectedCourse(course)}
@@ -875,6 +1035,125 @@ export default function AdminPage() {
                 </div>
               )}
             </motion.div>
+          ) : activeTab === "categories" ? (
+            <motion.div
+              key="categories-list"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-black tracking-tight">Category Management</h2>
+                  <p className="text-theme-text/40">Manage categories for course organization.</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setSelectedCategory(null);
+                    setCategoryForm({ name: "", description: "" });
+                    setIsEditingCategory(true);
+                  }}
+                  className="flex items-center gap-2 px-6 py-3 bg-theme-accent text-white font-bold rounded-xl hover:opacity-90 transition-opacity"
+                >
+                  <Plus size={20} /> Add Category
+                </button>
+              </div>
+
+              {isEditingCategory ? (
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="bg-theme-card border border-theme-border rounded-[32px] p-8 space-y-8 shadow-sm max-w-2xl"
+                >
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xl font-bold">{selectedCategory ? "Edit Category" : "New Category"}</h3>
+                    <button onClick={() => setIsEditingCategory(false)} className="p-2 hover:bg-theme-text/5 rounded-full">
+                      <X size={24} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Category Name</label>
+                      <input
+                        type="text"
+                        value={categoryForm.name}
+                        onChange={e => setCategoryForm({ ...categoryForm, name: e.target.value })}
+                        className="w-full bg-theme-bg border border-theme-border rounded-xl p-4 focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                        placeholder="e.g. Web Development"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Description</label>
+                      <textarea
+                        value={categoryForm.description}
+                        onChange={e => setCategoryForm({ ...categoryForm, description: e.target.value })}
+                        className="w-full bg-theme-bg border border-theme-border rounded-xl p-4 h-32 focus:ring-2 focus:ring-theme-accent/50 outline-none resize-none"
+                        placeholder="Brief description of the category..."
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-4 pt-4 border-t border-theme-border">
+                    <button 
+                      onClick={() => setIsEditingCategory(false)}
+                      className="px-8 py-3 rounded-xl text-theme-text/60 hover:text-theme-text"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={handleSaveCategory}
+                      className="px-12 py-3 bg-theme-accent text-white font-bold rounded-xl hover:opacity-90 flex items-center gap-2"
+                    >
+                      <Save size={20} />
+                      {selectedCategory ? "Update Category" : "Create Category"}
+                    </button>
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {categories.map(cat => (
+                    <div 
+                      key={cat._id}
+                      className="bg-theme-card border border-theme-border rounded-[32px] p-6 space-y-6 group hover:border-theme-accent transition-all shadow-sm"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="w-12 h-12 rounded-xl bg-theme-accent/10 flex items-center justify-center text-theme-accent">
+                          <Tag size={24} />
+                        </div>
+                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button 
+                            onClick={() => {
+                              setSelectedCategory(cat);
+                              setCategoryForm({
+                                name: cat.name,
+                                description: cat.description || ""
+                              });
+                              setIsEditingCategory(true);
+                            }}
+                            className="p-2 hover:bg-theme-accent/10 rounded-lg text-theme-accent"
+                          >
+                            <Edit2 size={18} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteCategory(cat._id)}
+                            className="p-2 hover:bg-red-500/10 rounded-lg text-red-400"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-bold truncate">{cat.name}</h3>
+                        <p className="text-sm text-theme-text/40 line-clamp-2">
+                          {cat.description || "No description set"}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
           ) : isEditingCourse ? (
             <motion.div
               key="course-form"
@@ -918,6 +1197,24 @@ export default function AdminPage() {
                     onChange={e => setCourseForm({ ...courseForm, duration: e.target.value })}
                     className="w-full bg-theme-card border border-theme-border rounded-xl p-4 focus:ring-2 focus:ring-theme-accent/50 outline-none"
                     placeholder="e.g. 5h 30m"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-theme-text/40">Category</label>
+                  <CategorySelect 
+                    value={courseForm.category} 
+                    onChange={(val) => setCourseForm({ ...courseForm, category: val })}
+                    categories={categories}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-theme-text/40">Tags (comma separated)</label>
+                  <input
+                    type="text"
+                    value={courseForm.tags}
+                    onChange={e => setCourseForm({ ...courseForm, tags: e.target.value })}
+                    className="w-full bg-theme-card border border-theme-border rounded-xl p-4 focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                    placeholder="e.g. AI, Python, Beginner"
                   />
                 </div>
                 <div className="space-y-2">
@@ -992,7 +1289,9 @@ export default function AdminPage() {
                             title: selectedCourse.title,
                             description: selectedCourse.description,
                             thumbnail: selectedCourse.thumbnail,
-                            duration: (selectedCourse as any).duration || ""
+                            duration: selectedCourse.duration || "",
+                            tags: selectedCourse.tags?.join(", ") || "",
+                            category: selectedCourse.category || "General"
                           });
                           setIsEditingCourse(true);
                         }}

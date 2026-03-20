@@ -11,6 +11,7 @@ import { Lesson } from "./src/models/Lesson.ts";
 import { UserProgress } from "./src/models/UserProgress.ts";
 import { User } from "./src/models/User.ts";
 import { Institution } from "./src/models/Institution.ts";
+import { Category } from "./src/models/Category.ts";
 
 dotenv.config();
 
@@ -412,9 +413,76 @@ async function startServer() {
   // Course Management (Admin)
   app.get("/api/courses", async (req, res) => {
     try {
-      const courses = await Course.find().sort({ createdAt: -1 });
-      res.json(courses);
+      const { 
+        search, 
+        category, 
+        page = "1", 
+        limit = "10", 
+        userId,
+        recommend = "false" 
+      } = req.query;
+
+      const pageNum = parseInt(page as string);
+      const limitNum = parseInt(limit as string);
+      const skip = (pageNum - 1) * limitNum;
+
+      let query: any = {};
+
+      // Search matching title, tags, or category
+      if (search) {
+        query.$or = [
+          { title: { $regex: search, $options: "i" } },
+          { tags: { $in: [new RegExp(search as string, "i")] } },
+          { category: { $regex: search, $options: "i" } }
+        ];
+      }
+
+      // Category filter
+      if (category) {
+        query.category = category;
+      }
+
+      // Recommendation logic
+      if (recommend === "true" && userId) {
+        const user = await User.findOne({ uid: userId });
+        const enrolled = await UserProgress.find({ userId }).populate("courseId");
+        
+        if (user || enrolled.length > 0) {
+          const userInterests = user?.interests || [];
+          const userHobbies = user?.hobbies || [];
+          const userPrefs = user?.learningPreferences || [];
+          
+          const enrolledTags = enrolled.flatMap((p: any) => p.courseId?.tags || []);
+          const enrolledCategories = enrolled.map((p: any) => p.courseId?.category).filter(Boolean);
+          
+          const allRelevantTags = [...new Set([...userInterests, ...userHobbies, ...userPrefs, ...enrolledTags])];
+          const allRelevantCategories = [...new Set([...enrolledCategories])];
+
+          // Boost courses matching tags or categories
+          // We'll use a weighted approach if possible, but for simple MongoDB:
+          query.$or = [
+            ...(query.$or || []),
+            { tags: { $in: allRelevantTags.map(t => new RegExp(t, "i")) } },
+            { category: { $in: allRelevantCategories } }
+          ];
+        }
+      }
+
+      const total = await Course.countDocuments(query);
+      const courses = await Course.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum);
+
+      res.json({
+        courses,
+        total,
+        page: pageNum,
+        totalPages: Math.ceil(total / limitNum),
+        hasMore: skip + courses.length < total
+      });
     } catch (err) {
+      console.error("Fetch courses error:", err);
       res.status(500).json({ error: "Failed to fetch courses" });
     }
   });
@@ -455,6 +523,47 @@ async function startServer() {
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to delete course" });
+    }
+  });
+
+  // Category Management
+  app.get("/api/categories", async (req, res) => {
+    try {
+      const categories = await Category.find().sort({ name: 1 });
+      res.json(categories);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch categories" });
+    }
+  });
+
+  app.post("/api/categories", isAdmin, async (req, res) => {
+    try {
+      const category = new Category(req.body);
+      await category.save();
+      res.json(category);
+    } catch (err) {
+      if ((err as any).code === 11000) {
+        return res.status(400).json({ error: "Category already exists" });
+      }
+      res.status(500).json({ error: "Failed to create category" });
+    }
+  });
+
+  app.put("/api/categories/:id", isAdmin, async (req, res) => {
+    try {
+      const category = await Category.findByIdAndUpdate(req.params.id, req.body, { new: true });
+      res.json(category);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update category" });
+    }
+  });
+
+  app.delete("/api/categories/:id", isAdmin, async (req, res) => {
+    try {
+      await Category.findByIdAndDelete(req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to delete category" });
     }
   });
 
