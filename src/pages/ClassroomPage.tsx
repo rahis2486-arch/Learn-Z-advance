@@ -41,6 +41,10 @@ export default function ClassroomPage() {
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<"content" | "notes" | "transcript">("content");
+  const [isRatingModalOpen, setIsRatingModalOpen] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [isSubmittingRating, setIsSubmittingRating] = useState(false);
+  const [userProgress, setUserProgress] = useState<any>(null);
 
   const { setContext, toggleSidebar, isSidebarOpen, theme } = useAssistant();
 
@@ -102,11 +106,63 @@ export default function ClassroomPage() {
       if (lessonsData.length > 0) {
         setCurrentLesson(lessonsData[0]);
       }
+
+      // Fetch user progress for this course
+      if (user) {
+        const progressRes = await fetch(`/api/progress/${user.uid}`);
+        if (progressRes.ok) {
+          const allProgress = await progressRes.json();
+          const currentProgress = allProgress.find((p: any) => p.courseId?._id === courseId);
+          setUserProgress(currentProgress);
+        }
+      }
     } catch (err) {
       console.error(err);
       setCourse(null);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleMarkLessonComplete = async () => {
+    if (!user || !courseId || !currentLesson) return;
+    try {
+      const res = await fetch(`/api/progress/${user.uid}/${courseId}/lesson/${currentLesson._id}`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const updatedProgress = await res.json();
+        // Since the backend doesn't populate courseId in the return, we need to handle it
+        setUserProgress({ ...updatedProgress, courseId: course });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleMarkCourseComplete = async () => {
+    if (!user || !courseId) return;
+    setIsRatingModalOpen(true);
+  };
+
+  const handleSubmitRating = async () => {
+    if (!user || !courseId) return;
+    setIsSubmittingRating(true);
+    try {
+      const res = await fetch(`/api/progress/${user.uid}/${courseId}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating })
+      });
+      if (res.ok) {
+        const updatedProgress = await res.json();
+        setUserProgress({ ...updatedProgress, courseId: course });
+        setIsRatingModalOpen(false);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSubmittingRating(false);
     }
   };
 
@@ -162,7 +218,7 @@ export default function ClassroomPage() {
                     </div>
                   </div>
                   <div className="p-8 flex-1 flex flex-col space-y-4">
-                    <h3 className="font-black text-xl text-theme-text group-hover:text-theme-accent transition-colors line-clamp-1">
+                    <h3 className="text-lg font-semibold text-theme-text group-hover:text-theme-accent transition-colors line-clamp-2">
                       {progress.courseId?.title}
                     </h3>
                     <div className="space-y-3 pt-4 border-t border-theme-border/5">
@@ -268,7 +324,7 @@ export default function ClassroomPage() {
             <Video size={18} />
             <span className="text-xs font-black uppercase tracking-widest">Course Content</span>
           </div>
-          <h2 className="font-bold text-lg line-clamp-2">{course.title}</h2>
+          <h2 className="text-base font-semibold line-clamp-2">{course.title}</h2>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -298,6 +354,9 @@ export default function ClassroomPage() {
                 <p className="text-sm font-medium line-clamp-1">{lesson.title}</p>
                 <p className="text-[10px] opacity-50 uppercase tracking-wider">12:45</p>
               </div>
+              {userProgress?.completedLessons?.includes(lesson._id) && (
+                <CheckCircle2 size={16} className="text-theme-accent" />
+              )}
               {currentLesson?._id === lesson._id && (
                 <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-theme-accent rounded-r-full" />
               )}
@@ -305,16 +364,35 @@ export default function ClassroomPage() {
           ))}
         </div>
 
-        <div className="p-4 border-t border-theme-border">
+        <div className="p-4 border-t border-theme-border space-y-4">
           <div className="bg-theme-text/5 rounded-2xl p-4 space-y-3">
             <div className="flex justify-between text-xs">
               <span className="text-theme-text-muted">Your Progress</span>
-              <span className="text-theme-accent font-bold">45%</span>
+              <span className="text-theme-accent font-bold">
+                {lessons.length > 0 ? Math.round(((userProgress?.completedLessons?.length || 0) / lessons.length) * 100) : 0}%
+              </span>
             </div>
             <div className="h-1.5 bg-theme-text/10 rounded-full overflow-hidden">
-              <div className="h-full bg-theme-accent w-[45%] rounded-full" />
+              <div 
+                className="h-full bg-theme-accent rounded-full transition-all duration-500" 
+                style={{ width: `${lessons.length > 0 ? ((userProgress?.completedLessons?.length || 0) / lessons.length) * 100 : 0}%` }}
+              />
             </div>
           </div>
+          
+          <button
+            onClick={handleMarkCourseComplete}
+            disabled={userProgress?.isCompleted}
+            className={cn(
+              "w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all",
+              userProgress?.isCompleted
+                ? "bg-emerald-500/10 text-emerald-500 cursor-default"
+                : "bg-theme-accent text-white hover:opacity-90"
+            )}
+          >
+            <CheckCircle2 size={18} />
+            {userProgress?.isCompleted ? "Course Completed" : "Mark Course as Completed"}
+          </button>
         </div>
       </motion.div>
 
@@ -342,6 +420,21 @@ export default function ClassroomPage() {
           </div>
 
           <div className="flex items-center gap-2 lg:gap-4">
+            <button
+              onClick={handleMarkLessonComplete}
+              disabled={userProgress?.completedLessons?.includes(currentLesson?._id)}
+              className={cn(
+                "flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl text-sm font-bold transition-all",
+                userProgress?.completedLessons?.includes(currentLesson?._id)
+                  ? "bg-emerald-500/10 text-emerald-500 cursor-default"
+                  : "bg-theme-text/5 text-theme-text hover:bg-theme-text/10"
+              )}
+            >
+              <CheckCircle2 size={16} />
+              <span className="hidden sm:inline">
+                {userProgress?.completedLessons?.includes(currentLesson?._id) ? "Lesson Completed" : "Mark Lesson as Completed"}
+              </span>
+            </button>
             <button 
               onClick={toggleSidebar}
               className={cn(
@@ -480,6 +573,86 @@ export default function ClassroomPage() {
           </div>
         </div>
       </div>
+
+      {/* Rating Modal */}
+      <AnimatePresence>
+        {isRatingModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsRatingModalOpen(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-theme-sidebar border border-theme-border rounded-[32px] shadow-2xl p-8 space-y-8"
+            >
+              <div className="text-center space-y-2">
+                <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle2 size={32} className="text-emerald-500" />
+                </div>
+                <h3 className="text-2xl font-bold">Congratulations!</h3>
+                <p className="text-theme-text-muted">You've completed the course. How would you rate your experience?</p>
+              </div>
+
+              <div className="flex justify-center gap-2">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <button
+                    key={star}
+                    onClick={() => setRating(star)}
+                    onMouseEnter={() => setRating(star)}
+                    className="p-1 transition-transform hover:scale-110"
+                  >
+                    <Sparkles 
+                      size={32} 
+                      className={cn(
+                        "transition-colors",
+                        star <= rating ? "text-amber-500 fill-amber-500" : "text-theme-text/10"
+                      )}
+                    />
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex gap-4">
+                <button
+                  onClick={() => setIsRatingModalOpen(false)}
+                  className="flex-1 py-3 rounded-xl font-bold text-theme-text-muted hover:bg-theme-text/5 transition-colors"
+                >
+                  Skip
+                </button>
+                <button
+                  onClick={handleSubmitRating}
+                  disabled={rating === 0 || isSubmittingRating}
+                  className="flex-1 py-3 bg-theme-accent text-white font-bold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isSubmittingRating ? <Loader2 size={18} className="animate-spin" /> : "Submit Rating"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
+const Loader2 = ({ size, className }: { size: number, className?: string }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="2" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className={className}
+  >
+    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+  </svg>
+);

@@ -12,10 +12,14 @@ interface User {
   onboardingCompleted: boolean;
   loginType: 'personal' | 'institutional';
   institutionId?: string;
+  username?: string;
   age?: number;
   country?: string;
   discoverySource?: string;
   interests?: string[];
+  hobbies?: string[];
+  learningPreferences?: string[];
+  motivation?: string;
   primaryGoal?: string;
   customGoal?: string;
   dailyCommitment?: string;

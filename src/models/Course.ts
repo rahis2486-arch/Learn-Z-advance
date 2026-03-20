@@ -4,6 +4,9 @@ const CourseSchema = new mongoose.Schema({
   title: { type: String, required: true },
   description: { type: String, required: true },
   thumbnail: { type: String, required: true },
+  duration: { type: String, default: "0h 0m" },
+  rating: { type: Number, default: 0 },
+  ratingCount: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now },
 });
 

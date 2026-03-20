@@ -22,6 +22,7 @@ import LoginPage from "./pages/LoginPage";
 import MathTutorPage from "./pages/MathTutorPage";
 import SubscriptionPage from "./pages/SubscriptionPage";
 import OnboardingPage from "./pages/OnboardingPage";
+import ProfilePage from "./pages/ProfilePage";
 
 import { AssistantProvider, useAssistant } from "./contexts/AssistantContext";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
@@ -181,6 +182,17 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (v: boolea
                     <button 
                       onClick={() => {
                         setIsAccountModalOpen(false);
+                        navigate('/profile');
+                        if (window.innerWidth < 1024) setIsOpen(false);
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-theme-text hover:bg-theme-text/5 transition-colors"
+                    >
+                      <User size={16} className="text-theme-accent" />
+                      <span>View Profile</span>
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setIsAccountModalOpen(false);
                         login();
                       }}
                       className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-theme-text hover:bg-theme-text/5 transition-colors"
@@ -223,7 +235,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (v: boolea
                   className="flex items-center gap-3 px-4 py-3 rounded-xl bg-theme-text/5 cursor-pointer hover:bg-theme-text/10 transition-colors group relative z-[60]"
                 >
                 {user.photoURL ? (
-                  <img src={user.photoURL} alt={user.displayName || ""} className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
+                  <img src={user.photoURL} alt={user.displayName || ""} className="w-8 h-8 rounded-full object-cover shrink-0" referrerPolicy="no-referrer" />
                 ) : (
                   <div className={cn("w-8 h-8 rounded-full bg-gradient-to-tr", theme === 'light' ? "from-indigo-500 to-blue-400" : "from-emerald-500 to-teal-400")} />
                 )}
@@ -419,6 +431,11 @@ function AppContent({ isSidebarOpen, setIsOpen }: { isSidebarOpen: boolean, setI
             <Route path="/subscription" element={
               <ProtectedRoute>
                 <SubscriptionPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/profile" element={
+              <ProtectedRoute>
+                <ProfilePage />
               </ProtectedRoute>
             } />
           </Routes>

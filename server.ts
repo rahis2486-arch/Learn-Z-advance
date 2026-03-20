@@ -161,11 +161,22 @@ async function startServer() {
       if (!user) {
         // First time login - check if this is the default admin
         const isDefaultAdmin = email === "rahis2486@gmail.com";
+        
+        // Generate unique username from email
+        let baseUsername = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+        let username = baseUsername;
+        let counter = 1;
+        while (await User.findOne({ username })) {
+          username = `${baseUsername}${counter}`;
+          counter++;
+        }
+
         user = new User({
           uid,
           email,
           displayName,
           photoURL,
+          username,
           role: isDefaultAdmin ? 'admin' : 'user',
           status: 'active',
           loginType: institutionId ? 'institutional' : 'personal',
@@ -173,10 +184,28 @@ async function startServer() {
         });
       } else {
         // Update existing user info
-        user.displayName = displayName;
-        user.photoURL = photoURL;
+        // Only update displayName if it's not already set in the database
+        if (!user.displayName && displayName) {
+          user.displayName = displayName;
+        }
+        // Only update photoURL if it's not already a local upload (starts with /public/uploads)
+        if (photoURL && !user.photoURL?.startsWith('/public/uploads')) {
+          user.photoURL = photoURL;
+        }
         user.lastLogin = new Date();
         
+        // Ensure they have a username if they don't (legacy users)
+        if (!user.username) {
+          let baseUsername = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+          let username = baseUsername;
+          let counter = 1;
+          while (await User.findOne({ username })) {
+            username = `${baseUsername}${counter}`;
+            counter++;
+          }
+          user.username = username;
+        }
+
         // If they logged in via institution this time, update it
         if (institutionId) {
           user.loginType = 'institutional';
@@ -289,7 +318,58 @@ async function startServer() {
     }
   });
 
+  // User Profile Update
+  app.put("/api/users/:uid", async (req, res) => {
+    try {
+      const { uid } = req.params;
+      const updates = req.body;
+
+      // If username is being updated, check for uniqueness
+      if (updates.username) {
+        const existing = await User.findOne({ username: updates.username, uid: { $ne: uid } });
+        if (existing) {
+          // Suggest a unique username
+          let baseUsername = updates.username.toLowerCase().replace(/[^a-z0-9]/g, '');
+          let suggested = baseUsername;
+          let counter = 1;
+          while (await User.findOne({ username: suggested })) {
+            suggested = `${baseUsername}${counter}`;
+            counter++;
+          }
+          return res.status(400).json({ 
+            error: "Username already taken", 
+            suggestion: suggested 
+          });
+        }
+      }
+
+      const user = await User.findOneAndUpdate({ uid }, updates, { new: true });
+      if (!user) return res.status(404).json({ error: "User not found" });
+      res.json(user);
+    } catch (err) {
+      console.error("User update error:", err);
+      res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
   // Onboarding Update
+  app.post("/api/users/:uid/profile-picture", upload.single("photo"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+      const photoURL = `/public/uploads/${req.file.filename}`;
+      const user = await User.findOneAndUpdate(
+        { uid: req.params.uid },
+        { photoURL },
+        { new: true }
+      );
+      if (!user) return res.status(404).json({ error: "User not found" });
+      res.json(user);
+    } catch (err) {
+      console.error("Profile picture update error:", err);
+      res.status(500).json({ error: "Failed to update profile picture" });
+    }
+  });
+
   app.post("/api/users/:uid/onboarding", async (req, res) => {
     try {
       const { uid } = req.params;
@@ -437,6 +517,50 @@ async function startServer() {
       res.json(progress);
     } catch (err) {
       res.status(500).json({ error: "Failed to enroll" });
+    }
+  });
+
+  app.post("/api/progress/:uid/:courseId/lesson/:lessonId", async (req, res) => {
+    try {
+      const { uid, courseId, lessonId } = req.params;
+      const progress = await (UserProgress as any).findOne({ userId: uid, courseId });
+      if (!progress) return res.status(404).json({ error: "Enrollment not found" });
+
+      if (!progress.completedLessons.includes(lessonId)) {
+        progress.completedLessons.push(lessonId);
+        await progress.save();
+      }
+      res.json(progress);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update progress" });
+    }
+  });
+
+  app.post("/api/progress/:uid/:courseId/complete", async (req, res) => {
+    try {
+      const { uid, courseId } = req.params;
+      const { rating } = req.body;
+      
+      const progress = await (UserProgress as any).findOne({ userId: uid, courseId });
+      if (!progress) return res.status(404).json({ error: "Enrollment not found" });
+
+      progress.isCompleted = true;
+      if (rating) progress.rating = rating;
+      await progress.save();
+
+      if (rating) {
+        const course = await Course.findById(courseId);
+        if (course) {
+          const currentTotal = (course as any).rating * (course as any).ratingCount;
+          (course as any).ratingCount += 1;
+          (course as any).rating = (currentTotal + rating) / (course as any).ratingCount;
+          await course.save();
+        }
+      }
+
+      res.json(progress);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to complete course" });
     }
   });
 

@@ -11,6 +11,9 @@ interface Course {
   title: string;
   description: string;
   thumbnail: string;
+  duration?: string;
+  rating?: number;
+  ratingCount?: number;
 }
 
 export default function LearnTubePage() {
@@ -134,7 +137,7 @@ export default function LearnTubePage() {
               
               <div className="p-8 flex-1 flex flex-col space-y-6">
                 <div className="space-y-3 flex-1">
-                  <h3 className="text-2xl font-black tracking-tight text-theme-text group-hover:text-theme-accent transition-colors line-clamp-1">
+                  <h3 className="text-xl font-semibold tracking-tight text-theme-text group-hover:text-theme-accent transition-colors line-clamp-2">
                     {course.title}
                   </h3>
                   <p className="text-sm text-theme-text-muted leading-relaxed line-clamp-2 font-medium">
@@ -147,11 +150,11 @@ export default function LearnTubePage() {
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-theme-text-muted">
                         <Clock size={14} className="text-theme-accent" /> 
-                        12h+ Content
+                        {course.duration || "0h 0m"}
                       </div>
                       <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-theme-text-muted">
                         <Star size={14} className="text-yellow-500 fill-yellow-500" /> 
-                        4.9 Rating
+                        {course.rating ? course.rating.toFixed(1) : "0.0"} Rating
                       </div>
                     </div>
                   </div>

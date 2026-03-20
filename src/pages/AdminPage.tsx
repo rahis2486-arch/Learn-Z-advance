@@ -66,7 +66,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   
   const [isEditingCourse, setIsEditingCourse] = useState(false);
-  const [courseForm, setCourseForm] = useState({ title: "", description: "", thumbnail: "" });
+  const [courseForm, setCourseForm] = useState({ title: "", description: "", thumbnail: "", duration: "" });
   const [isUploading, setIsUploading] = useState(false);
 
   const [isEditingInstitution, setIsEditingInstitution] = useState(false);
@@ -348,7 +348,7 @@ export default function AdminPage() {
       if (res.ok) {
         fetchCourses();
         setIsEditingCourse(false);
-        setCourseForm({ title: "", description: "", thumbnail: "" });
+        setCourseForm({ title: "", description: "", thumbnail: "", duration: "" });
       }
     } catch (err) {
       console.error(err);
@@ -507,7 +507,7 @@ export default function AdminPage() {
                 onClick={() => {
                   setIsEditingCourse(true);
                   setSelectedCourse(null);
-                  setCourseForm({ title: "", description: "", thumbnail: "" });
+                  setCourseForm({ title: "", description: "", thumbnail: "", duration: "" });
                 }}
                 className="p-1.5 hover:bg-theme-accent/10 rounded-lg text-theme-accent transition-colors"
               >
@@ -911,6 +911,16 @@ export default function AdminPage() {
                   />
                 </div>
                 <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-theme-text/40">Content Duration</label>
+                  <input
+                    type="text"
+                    value={courseForm.duration}
+                    onChange={e => setCourseForm({ ...courseForm, duration: e.target.value })}
+                    className="w-full bg-theme-card border border-theme-border rounded-xl p-4 focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                    placeholder="e.g. 5h 30m"
+                  />
+                </div>
+                <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-theme-text/40">Course Thumbnail</label>
                   <div className="flex items-center gap-6">
                     <div className="w-32 h-32 rounded-2xl bg-theme-card border border-theme-border overflow-hidden flex items-center justify-center relative group">
@@ -981,7 +991,8 @@ export default function AdminPage() {
                           setCourseForm({
                             title: selectedCourse.title,
                             description: selectedCourse.description,
-                            thumbnail: selectedCourse.thumbnail
+                            thumbnail: selectedCourse.thumbnail,
+                            duration: (selectedCourse as any).duration || ""
                           });
                           setIsEditingCourse(true);
                         }}
