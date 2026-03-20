@@ -6,7 +6,7 @@ import {
   FileText, Link as LinkIcon, ChevronRight,
   PlusCircle, CheckCircle2, Upload, Loader2,
   ChevronLeft, Users, Shield, UserX, UserCheck,
-  Search, Filter, MoreVertical
+  Search, Filter, MoreVertical, Building2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../lib/utils";
@@ -43,20 +43,40 @@ interface Lesson {
   notesDescription?: string;
 }
 
+interface Institution {
+  _id: string;
+  name: string;
+  location?: string;
+  logoUrl?: string;
+  allowedEmails: string[];
+  createdAt: string;
+}
+
 export default function AdminPage() {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const { theme } = useAssistant();
-  const [activeTab, setActiveTab] = useState<"courses" | "users">("courses");
+  const [activeTab, setActiveTab] = useState<"courses" | "users" | "institutions">("courses");
   const [courses, setCourses] = useState<Course[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [selectedInstitution, setSelectedInstitution] = useState<Institution | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [loading, setLoading] = useState(true);
   
   const [isEditingCourse, setIsEditingCourse] = useState(false);
   const [courseForm, setCourseForm] = useState({ title: "", description: "", thumbnail: "" });
   const [isUploading, setIsUploading] = useState(false);
+
+  const [isEditingInstitution, setIsEditingInstitution] = useState(false);
+  const [institutionForm, setInstitutionForm] = useState({
+    name: "",
+    location: "",
+    logoUrl: "",
+    allowedEmails: [] as string[]
+  });
+  const [emailInput, setEmailInput] = useState("");
   
   const [isEditingLesson, setIsEditingLesson] = useState(false);
   const [lessonForm, setLessonForm] = useState({
@@ -91,10 +111,136 @@ export default function AdminPage() {
   useEffect(() => {
     if (activeTab === "courses") {
       fetchCourses();
-    } else {
+    } else if (activeTab === "users") {
       fetchUsers();
+    } else if (activeTab === "institutions") {
+      fetchInstitutions();
     }
   }, [activeTab]);
+
+  const fetchInstitutions = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch("/api/admin/institutions", {
+        headers: { "x-user-uid": currentUser?.uid || "" }
+      });
+      const data = await res.json();
+      setInstitutions(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveInstitution = async () => {
+    try {
+      const method = selectedInstitution && isEditingInstitution ? "PUT" : "POST";
+      const url = selectedInstitution && isEditingInstitution 
+        ? `/api/admin/institutions/${selectedInstitution._id}` 
+        : "/api/admin/institutions";
+      
+      const res = await fetch(url, {
+        method,
+        headers: { 
+          "Content-Type": "application/json",
+          "x-user-uid": currentUser?.uid || ""
+        },
+        body: JSON.stringify(institutionForm),
+      });
+      
+      if (res.ok) {
+        fetchInstitutions();
+        setIsEditingInstitution(false);
+        setSelectedInstitution(null);
+        setInstitutionForm({ name: "", location: "", logoUrl: "", allowedEmails: [] });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteInstitution = async (id: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Institution",
+      message: "Are you sure you want to delete this institution? This will not delete users associated with it, but they will lose institutional access.",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/admin/institutions/${id}`, { 
+            method: "DELETE",
+            headers: { "x-user-uid": currentUser?.uid || "" }
+          });
+          if (res.ok) {
+            fetchInstitutions();
+            if (selectedInstitution?._id === id) setSelectedInstitution(null);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    });
+  };
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setInstitutionForm({ ...institutionForm, logoUrl: reader.result as string });
+        setIsUploading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("Upload failed:", err);
+      setIsUploading(false);
+    }
+  };
+
+  const addEmail = () => {
+    if (emailInput && !institutionForm.allowedEmails.includes(emailInput)) {
+      setInstitutionForm({
+        ...institutionForm,
+        allowedEmails: [...institutionForm.allowedEmails, emailInput]
+      });
+      setEmailInput("");
+    }
+  };
+
+  const removeEmail = (email: string) => {
+    setInstitutionForm({
+      ...institutionForm,
+      allowedEmails: institutionForm.allowedEmails.filter(e => e !== email)
+    });
+  };
+
+  const handleBulkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      // Split by comma, newline, or semicolon and trim
+      const emails = text.split(/[,\n;]/)
+        .map(e => e.trim())
+        .filter(e => e && e.includes('@') && !institutionForm.allowedEmails.includes(e));
+      
+      if (emails.length > 0) {
+        setInstitutionForm({
+          ...institutionForm,
+          allowedEmails: [...institutionForm.allowedEmails, ...emails]
+        });
+      }
+    };
+    reader.readAsText(file);
+    // Reset input
+    e.target.value = "";
+  };
 
   const fetchUsers = async () => {
     try {
@@ -341,6 +487,16 @@ export default function AdminPage() {
             <Users size={18} />
             <span className="font-bold text-sm">User Management</span>
           </button>
+          <button 
+            onClick={() => setActiveTab("institutions")}
+            className={cn(
+              "w-full flex items-center gap-3 p-3 rounded-xl transition-all",
+              activeTab === "institutions" ? "bg-theme-accent/10 text-theme-accent" : "text-theme-text/40 hover:bg-theme-text/5"
+            )}
+          >
+            <Building2 size={18} />
+            <span className="font-bold text-sm">Institution Management</span>
+          </button>
         </div>
 
         {activeTab === "courses" && (
@@ -498,6 +654,226 @@ export default function AdminPage() {
                   </tbody>
                 </table>
               </div>
+            </motion.div>
+          ) : activeTab === "institutions" ? (
+            <motion.div
+              key="institutions-list"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-black tracking-tight">Institution Management</h2>
+                  <p className="text-theme-text/40">Manage organizations and their allowed user lists.</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setSelectedInstitution(null);
+                    setInstitutionForm({ name: "", location: "", logoUrl: "", allowedEmails: [] });
+                    setIsEditingInstitution(true);
+                  }}
+                  className="flex items-center gap-2 px-6 py-3 bg-theme-accent text-white font-bold rounded-xl hover:opacity-90 transition-opacity"
+                >
+                  <Plus size={20} /> Add Institution
+                </button>
+              </div>
+
+              {isEditingInstitution ? (
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="bg-theme-card border border-theme-border rounded-[32px] p-8 space-y-8 shadow-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xl font-bold">{selectedInstitution ? "Edit Institution" : "New Institution"}</h3>
+                    <button onClick={() => setIsEditingInstitution(false)} className="p-2 hover:bg-theme-text/5 rounded-full">
+                      <X size={24} />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-8">
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Institution Name</label>
+                        <input
+                          type="text"
+                          value={institutionForm.name}
+                          onChange={e => setInstitutionForm({ ...institutionForm, name: e.target.value })}
+                          className="w-full bg-theme-bg border border-theme-border rounded-xl p-4 focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                          placeholder="e.g. Stanford University"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Location</label>
+                        <input
+                          type="text"
+                          value={institutionForm.location}
+                          onChange={e => setInstitutionForm({ ...institutionForm, location: e.target.value })}
+                          className="w-full bg-theme-bg border border-theme-border rounded-xl p-4 focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                          placeholder="e.g. California, USA"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Logo</label>
+                        <div className="flex items-center gap-4">
+                          <div className="w-20 h-20 rounded-2xl bg-theme-bg border border-theme-border flex items-center justify-center overflow-hidden relative group">
+                            {institutionForm.logoUrl ? (
+                              <img src={institutionForm.logoUrl} alt="Logo" className="w-full h-full object-cover" />
+                            ) : (
+                              <Building2 className="w-8 h-8 text-theme-text/20" />
+                            )}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleLogoUpload}
+                              className="absolute inset-0 opacity-0 cursor-pointer"
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-xs text-theme-text/40 mb-2">Upload logo or paste URL</p>
+                            <input
+                              type="text"
+                              value={institutionForm.logoUrl}
+                              onChange={e => setInstitutionForm({ ...institutionForm, logoUrl: e.target.value })}
+                              className="w-full bg-theme-bg border border-theme-border rounded-xl p-3 text-xs outline-none"
+                              placeholder="Logo URL..."
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Allowed Emails</label>
+                        <div className="relative">
+                          <button className="text-[10px] font-black uppercase tracking-widest text-theme-accent hover:underline flex items-center gap-1">
+                            <Upload size={10} />
+                            Bulk Upload (CSV)
+                          </button>
+                          <input 
+                            type="file" 
+                            accept=".csv,.txt" 
+                            onChange={handleBulkUpload}
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="email"
+                          value={emailInput}
+                          onChange={e => setEmailInput(e.target.value)}
+                          onKeyPress={e => e.key === 'Enter' && addEmail()}
+                          className="flex-1 bg-theme-bg border border-theme-border rounded-xl p-4 focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                          placeholder="Add email address..."
+                        />
+                        <button 
+                          onClick={addEmail}
+                          className="px-6 bg-theme-accent text-white font-bold rounded-xl hover:opacity-90"
+                        >
+                          Add
+                        </button>
+                      </div>
+                      <div className="bg-theme-bg border border-theme-border rounded-2xl p-4 h-[240px] overflow-y-auto space-y-2">
+                        {institutionForm.allowedEmails.length > 0 ? (
+                          institutionForm.allowedEmails.map(email => (
+                            <div key={email} className="flex items-center justify-between p-3 bg-theme-card border border-theme-border rounded-xl group">
+                              <span className="text-sm">{email}</span>
+                              <button 
+                                onClick={() => removeEmail(email)}
+                                className="p-1 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <X size={16} />
+                              </button>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="h-full flex flex-col items-center justify-center text-theme-text/20">
+                            <Users size={32} />
+                            <p className="text-xs mt-2">No emails added yet</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-4 pt-4 border-t border-theme-border">
+                    <button 
+                      onClick={() => setIsEditingInstitution(false)}
+                      className="px-8 py-3 rounded-xl text-theme-text/60 hover:text-theme-text"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={handleSaveInstitution}
+                      className="px-12 py-3 bg-theme-accent text-white font-bold rounded-xl hover:opacity-90 flex items-center gap-2"
+                    >
+                      <Save size={20} />
+                      {selectedInstitution ? "Update Institution" : "Create Institution"}
+                    </button>
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {institutions.map(inst => (
+                    <div 
+                      key={inst._id}
+                      className="bg-theme-card border border-theme-border rounded-[32px] p-6 space-y-6 group hover:border-theme-accent transition-all shadow-sm"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="w-16 h-16 rounded-2xl bg-theme-bg border border-theme-border flex items-center justify-center overflow-hidden">
+                          {inst.logoUrl ? (
+                            <img src={inst.logoUrl} alt={inst.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <Building2 className="w-8 h-8 text-theme-text/20" />
+                          )}
+                        </div>
+                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button 
+                            onClick={() => {
+                              setSelectedInstitution(inst);
+                              setInstitutionForm({
+                                name: inst.name,
+                                location: inst.location || "",
+                                logoUrl: inst.logoUrl || "",
+                                allowedEmails: inst.allowedEmails
+                              });
+                              setIsEditingInstitution(true);
+                            }}
+                            className="p-2 hover:bg-theme-accent/10 rounded-lg text-theme-accent"
+                          >
+                            <Edit2 size={18} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteInstitution(inst._id)}
+                            className="p-2 hover:bg-red-500/10 rounded-lg text-red-400"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-bold truncate">{inst.name}</h3>
+                        <p className="text-sm text-theme-text/40 flex items-center gap-1">
+                          <Filter size={12} />
+                          {inst.location || "No location set"}
+                        </p>
+                      </div>
+                      <div className="pt-4 border-t border-theme-border flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-xs font-bold text-theme-text/40">
+                          <Users size={14} />
+                          {inst.allowedEmails.length} Allowed Emails
+                        </div>
+                        <div className="text-[10px] uppercase tracking-widest text-theme-text/20">
+                          ID: {inst._id.slice(-6)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </motion.div>
           ) : isEditingCourse ? (
             <motion.div

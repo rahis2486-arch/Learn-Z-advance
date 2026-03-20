@@ -236,7 +236,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (v: boolea
             </>
           ) : (
             <button 
-              onClick={login}
+              onClick={() => login()}
               className={cn(
                 "w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold transition-colors",
                 theme === 'light' ? "bg-indigo-600 text-white hover:bg-indigo-500" : "bg-emerald-500 text-black hover:bg-emerald-400"

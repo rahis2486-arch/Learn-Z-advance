@@ -10,6 +10,7 @@ import { Course } from "./src/models/Course.ts";
 import { Lesson } from "./src/models/Lesson.ts";
 import { UserProgress } from "./src/models/UserProgress.ts";
 import { User } from "./src/models/User.ts";
+import { Institution } from "./src/models/Institution.ts";
 
 dotenv.config();
 
@@ -141,8 +142,20 @@ async function startServer() {
   // Auth Sync
   app.post("/api/auth/sync", async (req, res) => {
     try {
-      const { uid, email, displayName, photoURL } = req.body;
+      const { uid, email, displayName, photoURL, institutionId } = req.body;
       
+      // If institutional login, validate email
+      if (institutionId) {
+        const inst = await Institution.findById(institutionId);
+        if (!inst) {
+          return res.status(404).json({ error: "Institution not found" });
+        }
+        const isAllowed = inst.allowedEmails.some(e => e.toLowerCase() === email.toLowerCase());
+        if (!isAllowed) {
+          return res.status(403).json({ error: "Your email is not authorized for this institution. Please contact your organization or use personal login." });
+        }
+      }
+
       let user = await User.findOne({ uid });
       
       if (!user) {
@@ -154,7 +167,9 @@ async function startServer() {
           displayName,
           photoURL,
           role: isDefaultAdmin ? 'admin' : 'user',
-          status: 'active'
+          status: 'active',
+          loginType: institutionId ? 'institutional' : 'personal',
+          institutionId: institutionId || null
         });
       } else {
         // Update existing user info
@@ -162,6 +177,12 @@ async function startServer() {
         user.photoURL = photoURL;
         user.lastLogin = new Date();
         
+        // If they logged in via institution this time, update it
+        if (institutionId) {
+          user.loginType = 'institutional';
+          user.institutionId = institutionId;
+        }
+
         // Ensure default admin always keeps admin role
         if (email === "rahis2486@gmail.com") {
           user.role = 'admin';
@@ -214,6 +235,57 @@ async function startServer() {
       res.json(user);
     } catch (err) {
       res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  // Institution Management
+  app.get("/api/institutions", async (req, res) => {
+    try {
+      const institutions = await Institution.find().select('name location logoUrl');
+      res.json(institutions);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch institutions" });
+    }
+  });
+
+  app.get("/api/admin/institutions", isAdmin, async (req, res) => {
+    try {
+      const institutions = await Institution.find().sort({ createdAt: -1 });
+      res.json(institutions);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch institutions" });
+    }
+  });
+
+  app.post("/api/admin/institutions", isAdmin, async (req, res) => {
+    try {
+      const institution = new Institution(req.body);
+      await institution.save();
+      res.json(institution);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to create institution" });
+    }
+  });
+
+  app.put("/api/admin/institutions/:id", isAdmin, async (req, res) => {
+    try {
+      const institution = await Institution.findByIdAndUpdate(
+        req.params.id,
+        req.body,
+        { new: true }
+      );
+      res.json(institution);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update institution" });
+    }
+  });
+
+  app.delete("/api/admin/institutions/:id", isAdmin, async (req, res) => {
+    try {
+      await Institution.findByIdAndDelete(req.params.id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to delete institution" });
     }
   });
 

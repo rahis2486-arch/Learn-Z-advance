@@ -10,6 +10,8 @@ interface User {
   role: 'admin' | 'user';
   status: 'active' | 'deactivated';
   onboardingCompleted: boolean;
+  loginType: 'personal' | 'institutional';
+  institutionId?: string;
   age?: number;
   country?: string;
   discoverySource?: string;
@@ -29,7 +31,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: () => Promise<void>;
+  login: (institutionId?: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -40,7 +42,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const syncUser = async (firebaseUser: FirebaseUser) => {
+  const syncUser = async (firebaseUser: FirebaseUser, institutionId?: string) => {
     try {
       const res = await fetch('/api/auth/sync', {
         method: 'POST',
@@ -49,20 +51,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           uid: firebaseUser.uid,
           email: firebaseUser.email,
           displayName: firebaseUser.displayName,
-          photoURL: firebaseUser.photoURL
+          photoURL: firebaseUser.photoURL,
+          institutionId
         })
       });
       
       if (res.status === 403) {
         const data = await res.json();
-        alert(data.error || "Your account has been deactivated.");
         await signOut(auth);
         setUser(null);
+        throw new Error(data.error || "Unauthorized");
       } else if (res.ok) {
         const userData = await res.json();
         setUser(userData);
       }
     } catch (error) {
+      // Rethrow if it's an error we explicitly threw (like 403)
+      if (error instanceof Error && (error.message.includes("authorized") || error.message.includes("deactivated") || error.message === "Unauthorized")) {
+        throw error;
+      }
       console.error("Failed to sync user:", error);
       // Fallback to basic info
       setUser({
@@ -72,7 +79,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         photoURL: firebaseUser.photoURL,
         role: 'user',
         status: 'active',
-        onboardingCompleted: false
+        onboardingCompleted: false,
+        loginType: 'personal'
       });
     }
   };
@@ -96,14 +104,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const login = async () => {
+  const login = async (institutionId?: string) => {
     try {
-      await signInWithGoogle();
+      const user = await signInWithGoogle();
+      if (user) {
+        await syncUser(user, institutionId);
+      }
     } catch (error: any) {
       if (error.code === 'auth/popup-blocked') {
         alert("The sign-in popup was blocked by your browser. Please allow popups for this site and try again.");
       } else {
         console.error("Login error:", error);
+        throw error;
       }
     }
   };

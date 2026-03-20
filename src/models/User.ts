@@ -8,6 +8,8 @@ const UserSchema = new mongoose.Schema({
   role: { type: String, enum: ['admin', 'user'], default: 'user' },
   status: { type: String, enum: ['active', 'deactivated'], default: 'active' },
   onboardingCompleted: { type: Boolean, default: false },
+  loginType: { type: String, enum: ['personal', 'institutional'], default: 'personal' },
+  institutionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Institution', default: null },
   age: Number,
   country: String,
   discoverySource: String,
