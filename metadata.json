@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Remix: Learn-Z",
+  "description": "An AI-powered learning platform with Nova virtual tutor, integrated courses, and intelligent classroom features.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

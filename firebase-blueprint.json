@@ -1,0 +1,179 @@
+{
+  "entities": {
+    "Course": {
+      "title": "Course",
+      "description": "A learning course containing multiple lessons.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "The title of the course." },
+        "description": { "type": "string", "description": "A brief description of the course." },
+        "thumbnail": { "type": "string", "description": "URL to the course thumbnail image." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the course was created." }
+      },
+      "required": ["title", "description", "thumbnail"]
+    },
+    "Lesson": {
+      "title": "Lesson",
+      "description": "A single lesson within a course.",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string", "description": "ID of the parent course." },
+        "title": { "type": "string", "description": "The title of the lesson." },
+        "youtubeUrl": { "type": "string", "description": "URL to the lesson video." },
+        "videoNumber": { "type": "integer", "description": "Order of the lesson in the course." },
+        "transcript": { "type": "string", "description": "Text transcript of the lesson." },
+        "summary": { "type": "string", "description": "AI-generated summary of the lesson." },
+        "duration": { "type": "string", "description": "Duration of the lesson." },
+        "notesTitle": { "type": "string", "description": "Title for the lesson notes." },
+        "notesDescription": { "type": "string", "description": "Content of the lesson notes." }
+      },
+      "required": ["courseId", "title", "youtubeUrl", "videoNumber"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID." },
+        "email": { "type": "string", "format": "email", "description": "User's email address." },
+        "displayName": { "type": "string", "description": "User's display name." },
+        "photoURL": { "type": "string", "description": "URL to user's profile photo." },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "User's role in the system." },
+        "status": { "type": "string", "enum": ["active", "deactivated"], "description": "Account status." },
+        "onboardingCompleted": { "type": "boolean", "description": "Whether the user has completed the onboarding flow." },
+        "age": { "type": "integer", "description": "User's age." },
+        "country": { "type": "string", "description": "User's country." },
+        "discoverySource": { "type": "string", "description": "How the user heard about the platform." },
+        "interests": { "type": "array", "items": { "type": "string" }, "description": "User's learning interests." },
+        "hobbies": { "type": "array", "items": { "type": "string" }, "description": "User's hobbies." },
+        "learningStyle": { "type": "string", "enum": ["Video", "Text", "Interactive"], "description": "Preferred learning style." },
+        "difficultyLevel": { "type": "string", "enum": ["Beginner", "Intermediate", "Advanced"], "description": "Preferred difficulty level." },
+        "dailyStudyGoal": { "type": "number", "description": "Daily study goal in hours." },
+        "motivation": { "type": "string", "description": "User's motivation for learning." },
+        "lastLogin": { "type": "string", "format": "date-time", "description": "Last login timestamp." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp." }
+      },
+      "required": ["uid", "email", "role", "status"]
+    },
+    "UserProgress": {
+      "title": "UserProgress",
+      "description": "Tracks a user's progress in a course.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user." },
+        "courseId": { "type": "string", "description": "ID of the course." },
+        "completedLessons": { 
+          "type": "array", 
+          "items": { "type": "string" },
+          "description": "IDs of completed lessons."
+        },
+        "lastAccessed": { "type": "string", "format": "date-time", "description": "Last time the course was accessed." }
+      },
+      "required": ["userId", "courseId"]
+    },
+    "Memory": {
+      "title": "Memory",
+      "description": "AI memory entry for a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user." },
+        "content": { "type": "string", "description": "The text content of the memory." },
+        "embedding": { 
+          "type": "array", 
+          "items": { "type": "number" },
+          "description": "Vector embedding of the content."
+        },
+        "type": { "type": "string", "enum": ["short-term", "long-term"], "description": "Type of memory." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the memory was stored." }
+      },
+      "required": ["userId", "content", "type"]
+    },
+    "VisualMemory": {
+      "title": "VisualMemory",
+      "description": "AI visual memory (faces/objects).",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the person or object." },
+        "type": { "type": "string", "enum": ["person", "object"], "description": "Type of visual memory." },
+        "face_embedding": { 
+          "type": "array", 
+          "items": { "type": "number" },
+          "description": "Vector embedding of the face."
+        },
+        "image_snapshot": { "type": "string", "description": "Base64 encoded image snapshot." },
+        "description": { "type": "string", "description": "Description of the visual memory." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the memory was stored." }
+      },
+      "required": ["name", "type"]
+    },
+    "ChatHistory": {
+      "title": "ChatHistory",
+      "description": "History of chat messages.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user." },
+        "role": { "type": "string", "enum": ["user", "model"], "description": "Role of the message sender." },
+        "content": { "type": "string", "description": "The message content." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the message was sent." }
+      },
+      "required": ["userId", "role", "content"]
+    },
+    "MathSession": {
+      "title": "MathSession",
+      "description": "A math tutoring session history.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "UID of the user." },
+        "title": { "type": "string", "description": "Title of the math problem or session." },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": { "type": "string", "enum": ["user", "model"] },
+              "content": { "type": "string" },
+              "image": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title"]
+    }
+  },
+  "firestore": {
+    "/courses/{courseId}": {
+      "schema": "Course",
+      "description": "Collection of learning courses."
+    },
+    "/courses/{courseId}/lessons/{lessonId}": {
+      "schema": "Lesson",
+      "description": "Sub-collection of lessons for a course."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles."
+    },
+    "/progress/{progressId}": {
+      "schema": "UserProgress",
+      "description": "User course progress tracking."
+    },
+    "/memories/{memoryId}": {
+      "schema": "Memory",
+      "description": "AI memory entries."
+    },
+    "/visual_memories/{vMemoryId}": {
+      "schema": "VisualMemory",
+      "description": "AI visual memory entries."
+    },
+    "/chat_history/{chatId}": {
+      "schema": "ChatHistory",
+      "description": "Chat message history."
+    },
+    "/math_sessions/{sessionId}": {
+      "schema": "MathSession",
+      "description": "Math tutoring sessions."
+    }
+  }
+}

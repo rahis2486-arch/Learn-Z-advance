@@ -1,0 +1,665 @@
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from './AuthContext';
+import { 
+  generateEmbedding, 
+  storeMemory, 
+  searchMemory, 
+  generateSpeech, 
+  ChatMessage, 
+  extractDualMemories, 
+  getVerbalThinking, 
+  storeMemoryTool, 
+  searchMemoryTool,
+  navigateToPageTool,
+  getLongTermSummary,
+  updateLongTermSummary,
+  generateNewSummary
+} from "../services/geminiService";
+
+interface AssistantContextType {
+  isLive: boolean;
+  isCameraOn: boolean;
+  isMicOn: boolean;
+  isSpeaking: boolean;
+  isThinking: boolean;
+  isProcessing: boolean;
+  isConnecting: boolean;
+  isMemoryAction: boolean;
+  userVolume: number;
+  aiVolume: number;
+  longTermSummary: string;
+  isSidebarOpen: boolean;
+  messages: ChatMessage[];
+  context: any;
+  mathContext: any;
+  location: string;
+  theme: 'dark' | 'light';
+  facingMode: 'user' | 'environment';
+  stream: MediaStream | null;
+  
+  setContext: (ctx: any) => void;
+  setMathContext: (ctx: any) => void;
+  setLocation: (loc: string) => void;
+  setTheme: (theme: 'dark' | 'light') => void;
+  toggleSidebar: () => void;
+  toggleCamera: () => Promise<void>;
+  switchCamera: () => Promise<void>;
+  toggleMic: () => void;
+  startLiveSession: () => Promise<void>;
+  cleanupSession: () => Promise<void>;
+  setSidebarOpen: (open: boolean) => void;
+}
+
+const AssistantContext = createContext<AssistantContextType | undefined>(undefined);
+
+export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [isLive, setIsLive] = useState(false);
+  const [isCameraOn, setIsCameraOn] = useState(false);
+  const [isMicOn, setIsMicOn] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isMemoryAction, setIsMemoryAction] = useState(false);
+  const [userVolume, setUserVolume] = useState(0);
+  const [aiVolume, setAiVolume] = useState(0);
+  const [longTermSummary, setLongTermSummary] = useState("");
+  const [isSidebarOpen, setSidebarOpen] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [context, setContext] = useState<any>(null);
+  const [mathContext, setMathContext] = useState<any>(null);
+  const [location, setLocation] = useState<string>("/");
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [theme, setThemeState] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('learn-z-theme') as any) || 'dark';
+  });
+
+  const setTheme = (newTheme: 'dark' | 'light') => {
+    setThemeState(newTheme);
+    localStorage.setItem('learn-z-theme', newTheme);
+  };
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  const isLiveRef = useRef(false);
+  const isMicOnRef = useRef(false);
+  const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
+  const sessionRef = useRef<any>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const visionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pcmPlayerRef = useRef<{
+    ctx: AudioContext;
+    nextTime: number;
+    activeSources: Set<AudioBufferSourceNode>;
+  } | null>(null);
+  const sessionMessagesRef = useRef<ChatMessage[]>([]);
+  const sessionRetrievalFactsRef = useRef<string[]>([]);
+  const sessionLongTermFactsRef = useRef<string[]>([]);
+  const memorySoundRef = useRef<HTMLAudioElement | null>(null);
+  const lastRecognizedRef = useRef<{ id: string, time: number } | null>(null);
+
+  useEffect(() => { isLiveRef.current = isLive; }, [isLive]);
+  useEffect(() => { isMicOnRef.current = isMicOn; }, [isMicOn]);
+
+  useEffect(() => {
+    const init = async () => {
+      const summary = await getLongTermSummary(user?.uid);
+      setLongTermSummary(summary);
+      memorySoundRef.current = new Audio("https://cdn.pixabay.com/audio/2022/03/10/audio_c3508e3d05.mp3");
+      memorySoundRef.current.volume = 0.3;
+    };
+    init();
+  }, [user?.uid]);
+
+  // AI Volume simulation
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isSpeaking) {
+      interval = setInterval(() => {
+        setAiVolume(0.2 + Math.random() * 0.8);
+      }, 50);
+    } else {
+      setAiVolume(0);
+    }
+    return () => clearInterval(interval);
+  }, [isSpeaking]);
+
+  const playMemorySound = useCallback(() => {
+    if (memorySoundRef.current) {
+      memorySoundRef.current.currentTime = 0;
+      memorySoundRef.current.play().catch(e => console.log("Audio play blocked"));
+    }
+  }, []);
+
+  const triggerMemoryEffect = useCallback(() => {
+    setIsMemoryAction(true);
+    playMemorySound();
+    setTimeout(() => setIsMemoryAction(false), 1500);
+  }, [playMemorySound]);
+
+  const toggleCamera = async () => {
+    if (isCameraOn) {
+      stream?.getTracks().forEach(track => track.stop());
+      setStream(null);
+      setIsCameraOn(false);
+    } else {
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode } 
+        });
+        setStream(newStream);
+        if (!hiddenVideoRef.current) {
+          hiddenVideoRef.current = document.createElement('video');
+          hiddenVideoRef.current.muted = true;
+          hiddenVideoRef.current.playsInline = true;
+        }
+        hiddenVideoRef.current.srcObject = newStream;
+        hiddenVideoRef.current.play().catch(() => {});
+        setIsCameraOn(true);
+      } catch (err) {
+        console.error("Camera error:", err);
+      }
+    }
+  };
+
+  const switchCamera = async () => {
+    const newMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(newMode);
+    
+    if (isCameraOn) {
+      stream?.getTracks().forEach(track => track.stop());
+      
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: newMode } 
+        });
+        setStream(newStream);
+        if (hiddenVideoRef.current) {
+          hiddenVideoRef.current.srcObject = newStream;
+          hiddenVideoRef.current.play().catch(() => {});
+        }
+      } catch (err) {
+        console.error("Camera switch error:", err);
+      }
+    }
+  };
+
+  const toggleMic = () => {
+    setIsMicOn(!isMicOn);
+  };
+
+  const toggleSidebar = () => {
+    setSidebarOpen(!isSidebarOpen);
+  };
+
+  const playAudio = async (base64: string) => {
+    if (!pcmPlayerRef.current) return;
+    setIsSpeaking(true);
+    const { ctx, activeSources } = pcmPlayerRef.current;
+    if (ctx.state === 'suspended') await ctx.resume();
+    try {
+      const binaryString = atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+      const pcmData = new Int16Array(bytes.buffer);
+      const floatData = new Float32Array(pcmData.length);
+      for (let i = 0; i < pcmData.length; i++) floatData[i] = pcmData[i] / 32768.0;
+      const buffer = ctx.createBuffer(1, floatData.length, 24000);
+      buffer.getChannelData(0).set(floatData);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      
+      const startTime = Math.max(ctx.currentTime, pcmPlayerRef.current.nextTime);
+      source.start(startTime);
+      pcmPlayerRef.current.nextTime = startTime + buffer.duration;
+      
+      activeSources.add(source);
+      source.onended = () => {
+        activeSources.delete(source);
+        if (activeSources.size === 0) setIsSpeaking(false);
+      };
+    } catch (err) {
+      console.error("PCM Playback Error:", err);
+    }
+  };
+
+  const stopAudioPlayback = () => {
+    setIsSpeaking(false);
+    if (pcmPlayerRef.current) {
+      const { activeSources } = pcmPlayerRef.current;
+      activeSources.forEach(source => {
+        try {
+          source.stop();
+          source.disconnect();
+        } catch (e) {}
+      });
+      activeSources.clear();
+      pcmPlayerRef.current.nextTime = 0;
+    }
+  };
+
+  const finalizeSessionSummary = async () => {
+    const allSessionFacts = [...sessionRetrievalFactsRef.current, ...sessionLongTermFactsRef.current];
+    if (allSessionFacts.length === 0) return;
+    try {
+      const currentSummary = await getLongTermSummary(user?.uid);
+      const newSummary = await generateNewSummary(allSessionFacts, currentSummary);
+      await updateLongTermSummary(newSummary, user?.uid);
+      setLongTermSummary(newSummary);
+    } catch (err) {
+      console.error("Failed to finalize summary:", err);
+    }
+  };
+
+  const cleanupSession = async () => {
+    if (visionIntervalRef.current) clearInterval(visionIntervalRef.current);
+    stopAudioPlayback();
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch (e) {}
+      audioContextRef.current = null;
+    }
+    
+    // Don't clear sessionRef.current immediately to allow final messages to process
+    setIsLive(false);
+    setIsMicOn(false);
+    
+    if (sessionRef.current) {
+      try {
+        const session = await sessionRef.current;
+        if (session && typeof session.close === 'function') {
+          session.close();
+        }
+      } catch (e) {}
+      sessionRef.current = null;
+    }
+    
+    await finalizeSessionSummary();
+    
+    // We keep messages so the user can see the history
+    // sessionMessagesRef.current = []; 
+    sessionRetrievalFactsRef.current = [];
+    sessionLongTermFactsRef.current = [];
+  };
+
+  const startAudioCapture = async (sessionPromise: Promise<any>) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      audioContextRef.current = new AudioCtx({ sampleRate: 16000 });
+      const sampleRate = audioContextRef.current.sampleRate;
+      if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      const processor = audioContextRef.current.createScriptProcessor(2048, 1, 1);
+      source.connect(processor);
+      processor.connect(audioContextRef.current.destination);
+      processor.onaudioprocess = (e) => {
+        if (!isLiveRef.current || !isMicOnRef.current) {
+          setUserVolume(0);
+          return;
+        }
+        const inputData = e.inputBuffer.getChannelData(0);
+        let sum = 0;
+        for (let i = 0; i < inputData.length; i++) sum += Math.abs(inputData[i]);
+        setUserVolume(Math.min(1, (sum / inputData.length) * 5));
+        const pcmData = new Int16Array(inputData.length);
+        for (let i = 0; i < inputData.length; i++) pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+        const buffer = pcmData.buffer;
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+        const base64Data = btoa(binary);
+        
+        sessionPromise.then((session: any) => {
+          if (session && isLiveRef.current) {
+            session.sendRealtimeInput({ media: { data: base64Data, mimeType: `audio/pcm;rate=${sampleRate}` } });
+          }
+        }).catch(() => {});
+      };
+    } catch (err) {
+      console.error("Audio capture error:", err);
+    }
+  };
+
+  const startVisionCapture = (sessionPromise: Promise<any>) => {
+    if (visionIntervalRef.current) clearInterval(visionIntervalRef.current);
+    visionIntervalRef.current = setInterval(async () => {
+      if (!isLiveRef.current || !isCameraOn || !hiddenVideoRef.current) return;
+      const canvas = document.createElement('canvas');
+      const scale = 0.5;
+      canvas.width = hiddenVideoRef.current.videoWidth * scale;
+      canvas.height = hiddenVideoRef.current.videoHeight * scale;
+      const ctx = canvas.getContext('2d');
+      if (ctx && canvas.width > 0 && canvas.height > 0) {
+        ctx.drawImage(hiddenVideoRef.current, 0, 0, canvas.width, canvas.height);
+        const base64Image = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+        try {
+          const session = await sessionPromise;
+          if (!session || !isLiveRef.current) return;
+          
+          session.sendRealtimeInput({ video: { data: base64Image, mimeType: 'image/jpeg' } });
+        } catch (e) {}
+      }
+    }, 2000);
+  };
+
+  const startLiveSession = async (retryCount = 0) => {
+    if (isLive) {
+      cleanupSession();
+      return;
+    }
+    if (isConnecting && retryCount === 0) return;
+    
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return;
+    
+    if (!pcmPlayerRef.current) {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      pcmPlayerRef.current = { 
+        ctx: new AudioCtx({ sampleRate: 24000 }), 
+        nextTime: 0,
+        activeSources: new Set()
+      };
+    }
+    if (pcmPlayerRef.current.ctx.state === 'suspended') await pcmPlayerRef.current.ctx.resume();
+    
+    setIsConnecting(true);
+    const ai = new GoogleGenAI({ apiKey });
+    
+    try {
+      if (retryCount === 0) triggerMemoryEffect();
+      
+      const initialEmbedding = await generateEmbedding("User profile, preferences, name, and recent activities");
+      const initialMemories = initialEmbedding ? await searchMemory(initialEmbedding, undefined, user?.uid) : []; 
+      const memoryContext = initialMemories.length > 0 ? "\n\nYOUR LONG-TERM MEMORY ABOUT THE USER:\n" + initialMemories.map(m => m.content).join("\n") : "";
+      
+      const classroomContext = context 
+        ? `CURRENT CLASSROOM CONTEXT:
+           - Course: ${context.courseTitle}
+           - Lesson: ${context.lessonTitle}
+           - Summary: ${context.summary}
+           - Transcript: ${context.transcript}`
+        : "The student is currently NOT in a classroom. You cannot see any video content or lesson details right now.";
+
+      const mathTutorContext = mathContext
+        ? `CURRENT MATH TUTOR CONTEXT:
+           - Problem: ${mathContext.title}
+           - Current Step: ${mathContext.currentStep || 'Analyzing'}
+           - Last Message: ${mathContext.lastMessage || 'None'}
+           
+           MATH TUTORING RULES:
+           - You are assisting the student with a math problem.
+           - DO NOT give the answer directly.
+           - Guide them ONE STEP AT A TIME.
+           - Explain the "why" and "how" behind each step.
+           - Wait for the student to acknowledge before moving to the next step.`
+        : "The student is currently NOT in the Math Tutor Canvas.";
+
+      const systemInstruction = `You are Nova, a highly intelligent and friendly AI assistant for the "Learn Z" platform, developed by Malang Code Innovators. 
+      Your primary role is to assist students in their learning journey by providing deep insights into video lessons, summarizing course content, and answering questions about the curriculum.
+      
+      USER INFO:
+      - Name: ${user?.displayName || "Student"}
+      - Email: ${user?.email || "Unknown"}
+      - UID: ${user?.uid || "Guest"}
+
+      USER LOCATION: The student is currently on the "${location}" page.
+      ${classroomContext}
+      ${mathTutorContext}
+      
+      IDENTITY & PLATFORM:
+      - Name: Nova
+      - Platform: Learn Z
+      - Creators: Malang Code Innovators
+      - Purpose: Educational assistance and video lesson analysis.
+      
+      IMPORTANT RULES:
+      1. If the student is NOT in a classroom (as indicated above), and they ask about a video, lesson, or specific course content, you MUST politely tell them: "I see you're currently on the ${location} page. Please go inside the classroom and open a lesson first, then I'll be able to help you with the video content. Would you like me to take you to the classroom now?"
+      2. You have the "navigate_to_page" tool. Use it to help the user switch between pages like the classroom, courses, or their profile.
+      3. Your current version only supports video lesson assistance when the student is inside the classroom.
+      4. Acknowledge context changes immediately when they happen. You should be proactive in mentioning you've seen the new lesson content.
+      5. You are proud to be part of Learn Z and Malang Code Innovators.
+      6. MEMORY SEARCH: When you search memory, you will receive results from either "short-term" or "long-term" memory. 
+         - If you find something in "short-term" memory, acknowledge it naturally (e.g., "I remember you just mentioned...", "I noticed earlier that...").
+         - If you don't find it in short-term memory, you will automatically search long-term memory. If found there, acknowledge it (e.g., "Checking my deeper notes... ah yes, I remember...").
+         - If not found in either, acknowledge that you couldn't find it in your records.
+      7. NO PERSON RECOGNITION: You do NOT recognize people visually. You are a study assistant, not a humanoid assistant. You can see the student's handwriting through the camera to help with math, but you don't remember faces.
+      
+      NEURAL CORE SUMMARY: ${longTermSummary || "No summary yet."}
+      ${memoryContext}`;
+
+      const sessionPromise = ai.live.connect({
+        model: "gemini-2.5-flash-native-audio-preview-12-2025",
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } } },
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
+          systemInstruction,
+          generationConfig: {
+            maxOutputTokens: 2048,
+            temperature: 0.7,
+          },
+          tools: [{ functionDeclarations: [storeMemoryTool, searchMemoryTool, navigateToPageTool] }]
+        },
+        callbacks: {
+          onopen: () => {
+            setIsConnecting(false);
+            setIsLive(true);
+            setIsMicOn(true);
+            startAudioCapture(sessionPromise);
+            startVisionCapture(sessionPromise);
+            sessionPromise.then(session => {
+              if (session) (session as any).sendRealtimeInput({ text: "Hello Nova, I'm ready to talk." });
+            });
+          },
+          onmessage: async (message: LiveServerMessage) => {
+            if (message.toolCall) {
+              setIsThinking(true);
+              triggerMemoryEffect();
+              for (const call of message.toolCall.functionCalls) {
+                if (call.name === "store_memory") {
+                  const { content, type = 'short-term' } = call.args as any;
+                  setIsProcessing(true);
+                  if (type === 'long-term') sessionLongTermFactsRef.current.push(content);
+                  else sessionRetrievalFactsRef.current.push(content);
+                  const embedding = await generateEmbedding(content);
+                  if (embedding) await storeMemory(content, embedding, type, user?.uid);
+                  setIsProcessing(false);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "store_memory", id: call.id, response: { output: `Fact stored.` } }] });
+                  });
+                } else if (call.name === "search_memory") {
+                  const { query } = call.args as any;
+                  setIsProcessing(true);
+                  const embedding = await generateEmbedding(query);
+                  
+                  // Prioritized search: Short-term first
+                  let results = embedding ? await searchMemory(embedding, 'short-term', user?.uid) : [];
+                  let source = 'short-term';
+                  
+                  if (results.length === 0 && embedding) {
+                    // If not found in short-term, search long-term
+                    results = await searchMemory(embedding, 'long-term', user?.uid);
+                    source = 'long-term';
+                  }
+                  
+                  setIsProcessing(false);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ 
+                      functionResponses: [{ 
+                        name: "search_memory", 
+                        id: call.id, 
+                        response: { 
+                          results: results.map(r => r.content),
+                          source,
+                          found: results.length > 0
+                        } 
+                      }] 
+                    });
+                  });
+                } else if (call.name === "navigate_to_page") {
+                  const { page, courseId } = call.args as any;
+                  let path = "/";
+                  switch(page) {
+                    case "home": path = "/"; break;
+                    case "classroom": path = courseId ? `/classroom/${courseId}` : "/classroom"; break;
+                    case "learntube": path = "/learntube"; break;
+                    case "assistant": path = "/assistant"; break;
+                    case "memory": path = "/memory"; break;
+                    case "admin": path = "/admin"; break;
+                    case "math-tutor": path = "/math-tutor"; break;
+                    default: path = "/";
+                  }
+                  
+                  navigate(path);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "navigate_to_page", id: call.id, response: { output: `Navigated to ${page}.` } }] });
+                  });
+                }
+              }
+            }
+            const serverContent = message.serverContent as any;
+            if (serverContent?.userTranscript?.text) {
+              const text = serverContent.userTranscript.text;
+              const newMsg: ChatMessage = { role: 'user', content: text, timestamp: Date.now() };
+              sessionMessagesRef.current.push(newMsg);
+              setMessages(prev => [...prev, newMsg]);
+            }
+            if (message.serverContent?.modelTurn?.parts) {
+              setIsThinking(false);
+              const text = message.serverContent.modelTurn.parts.find(p => p.text)?.text;
+              const lastUserMsg = sessionMessagesRef.current.filter(m => m.role === 'user').pop()?.content;
+              if (text) {
+                const newMsg: ChatMessage = { role: 'model', content: text, timestamp: Date.now() };
+                sessionMessagesRef.current.push(newMsg);
+                setMessages(prev => [...prev, newMsg]);
+                if (lastUserMsg) {
+                  extractDualMemories(lastUserMsg, text).then(async (memories) => {
+                    for (const obs of memories.shortTerm) {
+                      sessionRetrievalFactsRef.current.push(obs);
+                      const emb = await generateEmbedding(obs);
+                      if (emb) await storeMemory(obs, emb, 'short-term', user?.uid);
+                    }
+                    for (const fact of memories.longTerm) {
+                      sessionLongTermFactsRef.current.push(fact);
+                      const emb = await generateEmbedding(fact);
+                      if (emb) await storeMemory(fact, emb, 'long-term', user?.uid);
+                    }
+                  });
+                }
+              }
+              const base64Audio = message.serverContent.modelTurn.parts.find(p => p.inlineData)?.inlineData?.data;
+              if (base64Audio) playAudio(base64Audio);
+            }
+            if (message.serverContent?.interrupted) {
+              console.log("Nova was interrupted by the system/user.");
+              stopAudioPlayback();
+            }
+          },
+          onclose: () => {
+            console.log("Live Session Closed");
+            cleanupSession();
+          },
+          onerror: (err) => {
+            console.error("Live Session Error:", err);
+            const isRetryable = err.message?.includes("unavailable") || 
+                               err.message?.includes("503") || 
+                               err.message?.includes("429") ||
+                               err.message?.includes("deadline") ||
+                               err.message?.includes("internal");
+
+            if (retryCount < 3 && isRetryable) {
+              console.log(`Retryable error detected, attempting reconnect... (Attempt ${retryCount + 1})`);
+              setTimeout(() => startLiveSession(retryCount + 1), 2000 * (retryCount + 1));
+            } else {
+              setIsConnecting(false);
+              cleanupSession();
+            }
+          },
+        }
+      });
+      sessionRef.current = sessionPromise;
+    } catch (err) {
+      console.error("Session Start Error:", err);
+      if (retryCount < 3 && (err.message?.includes("unavailable") || err.message?.includes("503"))) {
+        console.log(`Service unavailable, retrying... (Attempt ${retryCount + 1})`);
+        setTimeout(() => startLiveSession(retryCount + 1), 2000 * (retryCount + 1));
+      } else {
+        setIsConnecting(false);
+      }
+    }
+  };
+
+  // Monitor context changes to update AI mid-session
+  useEffect(() => {
+    if (isLive && sessionRef.current) {
+      sessionRef.current.then((session: any) => {
+        if (session && isLiveRef.current) {
+          const contextMsg = context 
+            ? `[NEURAL LINK SYNCHRONIZED: New Video Context Detected]
+              
+              The student has just engaged with a new lesson. This is a PROACTIVE UPDATE.
+              
+              NEW ACTIVE LESSON:
+              - Course: ${context.courseTitle}
+              - Lesson: ${context.lessonTitle}
+              - Summary: ${context.summary}
+              - Transcript: ${context.transcript}
+              
+              INSTRUCTION: You MUST acknowledge this change immediately. Greet the student and mention that you've successfully linked to the video feed for "${context.lessonTitle}". Show that you are ready to analyze this specific content. Be proactive and helpful.]`
+            : `[NEURAL LINK DISCONNECTED: Classroom context lost.]`;
+            
+          session.sendRealtimeInput({ 
+            parts: [{ 
+              text: contextMsg 
+            }] 
+          });
+          
+          // Trigger visual feedback for context sync
+          if (context) triggerMemoryEffect();
+        }
+      }).catch(() => {});
+    }
+  }, [context?.lessonTitle, context?.courseTitle, isLive]);
+
+  // Monitor location changes
+  useEffect(() => {
+    if (isLive && sessionRef.current) {
+      sessionRef.current.then((session: any) => {
+        if (session && isLiveRef.current) {
+          session.sendRealtimeInput({ 
+            parts: [{ 
+              text: `[SYSTEM UPDATE: The student has navigated to the "${location}" page.]` 
+            }] 
+          });
+        }
+      }).catch(() => {});
+    }
+  }, [location, isLive]);
+
+  return (
+    <AssistantContext.Provider value={{
+      isLive, isCameraOn, isMicOn, isSpeaking, isThinking, isProcessing, isConnecting, isMemoryAction,
+      userVolume, aiVolume, longTermSummary, isSidebarOpen, messages, context, mathContext, location, theme,
+      facingMode, stream, setContext, setMathContext, setLocation, setTheme, toggleSidebar, toggleCamera, switchCamera, toggleMic, startLiveSession, cleanupSession, setSidebarOpen
+    }}>
+      {children}
+    </AssistantContext.Provider>
+  );
+};
+
+export const useAssistant = () => {
+  const context = useContext(AssistantContext);
+  if (context === undefined) throw new Error('useAssistant must be used within an AssistantProvider');
+  return context;
+};

@@ -1,0 +1,188 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: courses
+    // Fields: title (string), description (string), thumbnail (string), createdAt (timestamp)
+    //
+    // Collection: courses/{courseId}/lessons
+    // Fields: courseId (string), title (string), videoUrl (string), videoNumber (int), transcript (string), summary (string), duration (string)
+    //
+    // Collection: users
+    // Fields: uid (string), email (string), displayName (string), photoURL (string), role (string: admin|user), status (string: active|deactivated), lastLogin (timestamp), createdAt (timestamp), onboardingCompleted (bool), age (int), country (string), discoverySource (string), interests (list), hobbies (list), learningStyle (string), difficultyLevel (string), dailyStudyGoal (number), motivation (string)
+    //
+    // Collection: progress
+    // Fields: userId (string), courseId (string), completedLessons (list of strings), lastAccessed (timestamp)
+    //
+    // Collection: memories
+    // Fields: userId (string), content (string), embedding (list of numbers), type (string: short-term|long-term), timestamp (timestamp)
+    //
+    // Collection: visual_memories
+    // Fields: name (string), type (string: person|object), face_embedding (list of numbers), image_snapshot (string), description (string), timestamp (timestamp)
+    //
+    // Collection: chat_history
+    // Fields: userId (string), role (string: user|model), content (string), timestamp (timestamp)
+    //
+    // Collection: math_sessions
+    // Fields: userId (string), title (string), messages (list of maps), createdAt (timestamp)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "rahis2486@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidCourse(data) {
+      return hasOnlyAllowedFields(['title', 'description', 'thumbnail', 'createdAt']) &&
+        data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+        data.description is string && data.description.size() < 2000 &&
+        isValidUrl(data.thumbnail);
+    }
+
+    function isValidLesson(data) {
+      return hasOnlyAllowedFields(['courseId', 'title', 'youtubeUrl', 'videoNumber', 'transcript', 'summary', 'duration', 'notesTitle', 'notesDescription']) &&
+        data.courseId is string &&
+        data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+        isValidUrl(data.youtubeUrl) &&
+        data.videoNumber is int &&
+        (data.transcript == null || (data.transcript is string && data.transcript.size() < 50000)) &&
+        (data.summary == null || (data.summary is string && data.summary.size() < 5000)) &&
+        (data.notesTitle == null || (data.notesTitle is string && data.notesTitle.size() < 200)) &&
+        (data.notesDescription == null || (data.notesDescription is string && data.notesDescription.size() < 5000));
+    }
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'role', 'status', 'lastLogin', 'createdAt', 'onboardingCompleted', 'age', 'country', 'discoverySource', 'interests', 'hobbies', 'learningStyle', 'difficultyLevel', 'dailyStudyGoal', 'motivation']) &&
+        data.uid is string && data.uid == request.auth.uid &&
+        isValidEmail(data.email) &&
+        data.role in ['admin', 'user'] &&
+        data.status in ['active', 'deactivated'] &&
+        (!('onboardingCompleted' in data) || data.onboardingCompleted is bool) &&
+        (!('age' in data) || data.age is int) &&
+        (!('country' in data) || data.country is string) &&
+        (!('discoverySource' in data) || data.discoverySource is string) &&
+        (!('interests' in data) || data.interests is list) &&
+        (!('hobbies' in data) || data.hobbies is list) &&
+        (!('learningStyle' in data) || data.learningStyle in ['Video', 'Text', 'Interactive']) &&
+        (!('difficultyLevel' in data) || data.difficultyLevel in ['Beginner', 'Intermediate', 'Advanced']) &&
+        (!('dailyStudyGoal' in data) || data.dailyStudyGoal is number) &&
+        (!('motivation' in data) || data.motivation is string);
+    }
+
+    function isValidProgress(data) {
+      return hasOnlyAllowedFields(['userId', 'courseId', 'completedLessons', 'lastAccessed']) &&
+        data.userId == request.auth.uid &&
+        data.courseId is string &&
+        data.completedLessons is list;
+    }
+
+    function isValidMemory(data) {
+      return hasOnlyAllowedFields(['userId', 'content', 'embedding', 'type', 'timestamp']) &&
+        data.userId == request.auth.uid &&
+        data.content is string && data.content.size() < 5000 &&
+        data.embedding is list &&
+        data.type in ['short-term', 'long-term'];
+    }
+
+    function isValidChat(data) {
+      return hasOnlyAllowedFields(['userId', 'role', 'content', 'timestamp']) &&
+        data.userId == request.auth.uid &&
+        data.role in ['user', 'model'] &&
+        data.content is string && data.content.size() < 10000;
+    }
+
+    function isValidMathSession(data) {
+      return hasOnlyAllowedFields(['userId', 'title', 'messages', 'createdAt']) &&
+        data.userId == request.auth.uid &&
+        data.title is string && data.title.size() > 0 && data.title.size() < 500 &&
+        data.messages is list;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /courses/{courseId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidCourse(request.resource.data);
+      allow delete: if isAdmin();
+
+      match /lessons/{lessonId} {
+        allow read: if isAuthenticated();
+        allow create, update: if isAdmin() && isValidLesson(request.resource.data);
+        allow delete: if isAdmin();
+      }
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'user' || isAdmin());
+      allow update: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /progress/{progressId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create, update: if isAuthenticated() && isValidProgress(request.resource.data) && (request.resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /memories/{memoryId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create, update: if isAuthenticated() && isValidMemory(request.resource.data) && (request.resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    match /visual_memories/{vMemoryId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated(); // Visual memory might be shared or admin managed, keeping it simple for now
+      allow delete: if isAdmin();
+    }
+
+    match /chat_history/{chatId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidChat(request.resource.data) && (request.resource.data.userId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    match /math_sessions/{sessionId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create, update: if isAuthenticated() && isValidMathSession(request.resource.data) && (request.resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+  }
+}
