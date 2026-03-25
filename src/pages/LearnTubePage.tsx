@@ -63,7 +63,7 @@ export default function LearnTubePage() {
   useEffect(() => {
     if (user) {
       fetchEnrolled();
-      if ((user.role === 'admin' || user.role === 'institution-admin') && user.loginType === 'institutional') {
+      if ((user.role === 'admin' || user.role === 'institution_admin') && user.loginType === 'institutional') {
         fetchInstitutionRecommendations();
       }
     }
@@ -364,7 +364,7 @@ export default function LearnTubePage() {
                     </button>
                   )}
 
-                  {user?.role === 'institution-admin' && user?.loginType === 'institutional' && (
+                  {user?.role === 'institution_admin' && (
                     <button 
                       onClick={() => handleRecommend(course._id)}
                       className={cn(

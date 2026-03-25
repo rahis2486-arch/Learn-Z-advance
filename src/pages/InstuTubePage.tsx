@@ -38,7 +38,11 @@ export default function InstuTubePage() {
     if (!user?.institutionId) return;
     try {
       setLoading(true);
-      const res = await fetch(`/api/recommendations/${user.institutionId}`);
+      const res = await fetch(`/api/recommendations/${user.institutionId}`, {
+        headers: {
+          'x-user-uid': user.uid
+        }
+      });
       if (!res.ok) throw new Error("Failed to fetch recommendations");
       const data = await res.json();
       setCourses(data);

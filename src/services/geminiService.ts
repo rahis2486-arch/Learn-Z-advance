@@ -237,11 +237,10 @@ export const navigateToPageTool: FunctionDeclaration = {
   }
 };
 
-export async function getLongTermSummary(userId?: string): Promise<string> {
+export async function getLongTermSummary(userId?: string, retries = 3): Promise<string> {
   try {
     console.log(`Fetching long-term summary for userId: ${userId}...`);
-    let url = '/api/summary';
-    if (userId) url += `?userId=${userId}`;
+    const url = `${window.location.origin}/api/summary${userId ? `?userId=${userId}` : ''}`;
     
     const res = await fetch(url, {
       headers: {
@@ -259,6 +258,11 @@ export async function getLongTermSummary(userId?: string): Promise<string> {
     console.log("Summary fetched successfully");
     return data.content || "";
   } catch (err) {
+    if (retries > 0) {
+      console.warn(`Retrying summary fetch... (${retries} left)`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return getLongTermSummary(userId, retries - 1);
+    }
     console.error("Failed to get summary:", err);
     // Return empty string as fallback to prevent app crash
     return "";

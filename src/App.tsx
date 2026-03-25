@@ -8,7 +8,8 @@ import { useState, useEffect } from "react";
 import { 
   Camera, Settings, Menu, X,
   Activity, Sparkles, Brain, BookOpen, PlayCircle, ShieldCheck,
-  Calculator, Bot, Sun, Moon, RefreshCw, MoreVertical, User, CreditCard
+  Calculator, Bot, Sun, Moon, RefreshCw, MoreVertical, User, CreditCard,
+  LayoutDashboard, BarChart3
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "./lib/utils";
@@ -24,6 +25,7 @@ import MathTutorPage from "./pages/MathTutorPage";
 import SubscriptionPage from "./pages/SubscriptionPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import ProfilePage from "./pages/ProfilePage";
+import DashboardPage from "./pages/DashboardPage";
 
 import { AssistantProvider, useAssistant } from "./contexts/AssistantContext";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
@@ -98,6 +100,7 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (v: boolea
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   
   const navItems = [
+    { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
     { icon: PlayCircle, label: "Classroom", path: "/classroom" },
     { icon: BookOpen, label: "LearnTube", path: "/learntube" },
     { icon: Sparkles, label: "InstuTube", path: "/instutube", institutionalOnly: true },
@@ -442,6 +445,11 @@ function AppContent({ isSidebarOpen, setIsOpen }: { isSidebarOpen: boolean, setI
             <Route path="/subscription" element={
               <ProtectedRoute>
                 <SubscriptionPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/dashboard" element={
+              <ProtectedRoute>
+                <DashboardPage />
               </ProtectedRoute>
             } />
             <Route path="/profile" element={

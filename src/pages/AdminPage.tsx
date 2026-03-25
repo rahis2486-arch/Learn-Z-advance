@@ -19,7 +19,7 @@ interface User {
   email: string;
   displayName: string;
   photoURL: string;
-  role: 'admin' | 'user' | 'institution-admin' | 'staff';
+  role: 'admin' | 'user' | 'institution_admin' | 'staff' | 'student' | 'institution_student';
   status: 'active' | 'deactivated';
   lastLogin: string;
   username?: string;
@@ -190,7 +190,7 @@ export default function AdminPage() {
   });
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [roleFilter, setRoleFilter] = useState<"all" | "admin" | "user" | "institution-admin" | "staff">("all");
+  const [roleFilter, setRoleFilter] = useState<"all" | "admin" | "user" | "institution_admin" | "staff" | "student" | "institution_student">("all");
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [selectedUserForEdit, setSelectedUserForEdit] = useState<User | null>(null);
   const [userForm, setUserForm] = useState({ displayName: "", username: "", role: "user" as User['role'], status: "active" as User['status'], institutionId: "" });
@@ -416,8 +416,8 @@ export default function AdminPage() {
   };
 
   const updateUser = async (uid: string, updates: Partial<User>) => {
-    if (updates.role === 'institution-admin' && !updates.institutionId) {
-      alert("Please select an institution for the Institution Admin role.");
+    if ((updates.role === 'institution_admin' || updates.role === 'institution_student') && !updates.institutionId) {
+      alert("Please select an institution for institutional roles.");
       return;
     }
     try {
@@ -773,7 +773,9 @@ export default function AdminPage() {
                     <option value="all">All Roles</option>
                     <option value="user">User</option>
                     <option value="staff">Staff</option>
-                    <option value="institution-admin">Institution Admin</option>
+                    <option value="institution_admin">Institution Admin</option>
+                    <option value="institution_student">Institution Student</option>
+                    <option value="student">Student</option>
                     <option value="admin">Admin</option>
                   </select>
                   <div className="flex items-center gap-2 px-4 py-2 bg-theme-card border border-theme-border rounded-xl text-xs font-bold text-theme-text/40">
@@ -810,7 +812,7 @@ export default function AdminPage() {
                           <div className={cn(
                             "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
                             u.role === 'admin' ? "bg-emerald-500/10 text-emerald-500" : 
-                            u.role === 'institution-admin' ? "bg-amber-500/10 text-amber-500" :
+                            u.role === 'institution_admin' ? "bg-amber-500/10 text-amber-500" :
                             u.role === 'staff' ? "bg-purple-500/10 text-purple-400" :
                             "bg-blue-500/10 text-blue-400"
                           )}>
@@ -1606,7 +1608,9 @@ export default function AdminPage() {
                           >
                             <option value="user">User</option>
                             <option value="staff">Staff</option>
-                            <option value="institution-admin">Institution Admin</option>
+                            <option value="institution_admin">Institution Admin</option>
+                            <option value="institution_student">Institution Student</option>
+                            <option value="student">Student</option>
                             <option value="admin">Admin</option>
                           </select>
                         </div>
@@ -1626,7 +1630,7 @@ export default function AdminPage() {
                   </div>
 
                   <div className="space-y-6">
-                    {userForm.role === 'institution-admin' && (
+                    {(userForm.role === 'institution_admin' || userForm.role === 'institution_student') && (
                       <div className="space-y-4 h-full flex flex-col">
                         <div className="flex items-center justify-between">
                           <h4 className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Linked Institution (Required)</h4>
@@ -1680,7 +1684,7 @@ export default function AdminPage() {
                         </div>
                       </div>
                     )}
-                    {userForm.role !== 'institution-admin' && (
+                    {!(userForm.role === 'institution_admin' || userForm.role === 'institution_student') && (
                       <div className="h-full flex items-center justify-center border-2 border-dashed border-theme-border rounded-[32px] p-8 text-center bg-theme-text/[0.01]">
                         <div className="space-y-2">
                           <Building2 size={32} className="mx-auto text-theme-text/10" />

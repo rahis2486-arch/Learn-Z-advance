@@ -161,6 +161,9 @@ async function startServer() {
 
       // If institutional login, validate email
       if (institutionId) {
+        if (!mongoose.Types.ObjectId.isValid(institutionId)) {
+          return res.status(400).json({ error: "Invalid Institution ID" });
+        }
         const inst = await Institution.findById(institutionId);
         if (!inst) {
           return res.status(404).json({ error: "Institution not found" });
@@ -192,7 +195,7 @@ async function startServer() {
           displayName,
           photoURL,
           username,
-          role: isDefaultAdmin ? 'admin' : 'user',
+          role: isDefaultAdmin ? 'admin' : (institutionId ? 'institution_student' : 'student'),
           status: 'active',
           loginType: institutionId ? 'institutional' : 'personal',
           institutionId: institutionId || null
@@ -367,7 +370,20 @@ async function startServer() {
 
   app.get("/api/recommendations/:institutionId", async (req, res) => {
     try {
-      const recommendations = await Recommendation.find({ institutionId: req.params.institutionId })
+      const { institutionId } = req.params;
+      const uid = req.headers['x-user-uid'];
+      
+      if (!uid) return res.status(401).json({ error: "Unauthorized" });
+      
+      const user = await User.findOne({ uid });
+      if (!user) return res.status(404).json({ error: "User not found" });
+      
+      // Check if user belongs to this institution or is a global admin
+      if (user.role !== 'admin' && user.institutionId?.toString() !== institutionId) {
+        return res.status(403).json({ error: "Forbidden: You do not belong to this institution" });
+      }
+
+      const recommendations = await Recommendation.find({ institutionId })
         .populate("courseId")
         .sort({ createdAt: -1 });
       
@@ -715,6 +731,66 @@ async function startServer() {
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to delete lesson" });
+    }
+  });
+
+  // Dashboard Stats
+  app.get("/api/dashboard/stats/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const progress = await (UserProgress as any).find({ userId }).populate('courseId');
+      
+      const stats = {
+        totalEnrolled: progress.length,
+        completedCourses: progress.filter((p: any) => p.isCompleted).length,
+        inProgressCourses: progress.filter((p: any) => !p.isCompleted).length,
+        
+        // Progress over time (last 7 days of activity)
+        activityHistory: await Promise.all(progress.flatMap((p: any) => 
+          p.lessonQuizzes.flatMap((q: any) => 
+            q.history.map((h: any) => ({
+              date: h.date,
+              score: (h.score / q.totalQuestions) * 100,
+              courseTitle: p.courseId?.title || p.courseSnapshot?.title || "Unknown Course"
+            }))
+          )
+        )).then(history => 
+          history.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        ),
+
+        // Scores per course
+        courseScores: progress.map((p: any) => {
+          const totalPossible = p.lessonQuizzes.reduce((acc: number, q: any) => acc + q.totalQuestions, 0);
+          const totalScored = p.lessonQuizzes.reduce((acc: number, q: any) => acc + q.score, 0);
+          return {
+            id: p._id.toString(),
+            title: p.courseId?.title || p.courseSnapshot?.title || "Unknown Course",
+            averageScore: totalPossible > 0 ? (totalScored / totalPossible) * 100 : 0,
+            completedLessons: p.completedLessons.length,
+            totalQuizzes: p.lessonQuizzes.length
+          };
+        }),
+
+        // Detailed lesson results and AI feedback
+        lessonResults: progress.flatMap((p: any) => 
+          p.lessonQuizzes.map((q: any) => ({
+            id: `${p._id.toString()}-${q.lessonId}`,
+            courseTitle: p.courseId?.title || p.courseSnapshot?.title || "Unknown Course",
+            lessonId: q.lessonId,
+            score: q.score,
+            totalQuestions: q.totalQuestions,
+            percentage: (q.score / q.totalQuestions) * 100,
+            feedback: q.feedback,
+            completed: q.completed,
+            attempts: q.attempts
+          }))
+        )
+      };
+
+      res.json(stats);
+    } catch (err) {
+      console.error("Dashboard stats error:", err);
+      res.status(500).json({ error: "Failed to fetch dashboard stats" });
     }
   });
 
