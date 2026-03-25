@@ -24,8 +24,10 @@ export default function LearnTubePage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [enrolledCourses, setEnrolledCourses] = useState<string[]>([]);
+  const [enrolledPersonal, setEnrolledPersonal] = useState<string[]>([]);
+  const [enrolledInstitution, setEnrolledInstitution] = useState<string[]>([]);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [recommendedByInst, setRecommendedByInst] = useState<string[]>([]);
   
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -59,7 +61,12 @@ export default function LearnTubePage() {
   }, [page]);
 
   useEffect(() => {
-    if (user) fetchEnrolled();
+    if (user) {
+      fetchEnrolled();
+      if ((user.role === 'admin' || user.role === 'institution-admin') && user.loginType === 'institutional') {
+        fetchInstitutionRecommendations();
+      }
+    }
   }, [user]);
 
   useEffect(() => {
@@ -121,10 +128,60 @@ export default function LearnTubePage() {
       if (!res.ok) throw new Error("Failed to fetch enrolled courses");
       const data = await res.json();
       if (Array.isArray(data)) {
-        setEnrolledCourses(data.map((p: any) => p.courseId?._id).filter(Boolean));
+        setEnrolledPersonal(data.filter((p: any) => (p.enrollmentSource || 'personal') === 'personal').map((p: any) => p.courseId?._id).filter(Boolean));
+        setEnrolledInstitution(data.filter((p: any) => p.enrollmentSource === 'institution').map((p: any) => p.courseId?._id).filter(Boolean));
       }
     } catch (err) {
       console.error("Failed to fetch enrolled courses:", err);
+    }
+  };
+
+  const fetchInstitutionRecommendations = async () => {
+    if (!user?.institutionId) return;
+    try {
+      const res = await fetch(`/api/recommendations/${user.institutionId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setRecommendedByInst(data.map((c: any) => c._id));
+      }
+    } catch (err) {
+      console.error("Failed to fetch institution recommendations:", err);
+    }
+  };
+
+  const handleRecommend = async (courseId: string) => {
+    if (!user?.institutionId) return;
+    try {
+      const isRecommended = recommendedByInst.includes(courseId);
+      const method = isRecommended ? "DELETE" : "POST";
+      const url = isRecommended 
+        ? `/api/recommendations/${user.institutionId}/${courseId}`
+        : "/api/recommendations";
+      
+      const body = isRecommended ? undefined : JSON.stringify({
+        institutionId: user.institutionId,
+        courseId,
+        recommendedBy: user.uid
+      });
+
+      const res = await fetch(url, {
+        method,
+        headers: { 
+          "Content-Type": "application/json",
+          "x-user-uid": user.uid
+        },
+        body
+      });
+
+      if (res.ok) {
+        if (isRecommended) {
+          setRecommendedByInst(prev => prev.filter(id => id !== courseId));
+        } else {
+          setRecommendedByInst(prev => [...prev, courseId]);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to update recommendation:", err);
     }
   };
 
@@ -137,10 +194,10 @@ export default function LearnTubePage() {
       const res = await fetch("/api/enroll", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.uid, courseId }),
+        body: JSON.stringify({ userId: user.uid, courseId, enrollmentSource: 'personal' }),
       });
       if (res.ok) {
-        setEnrolledCourses([...enrolledCourses, courseId]);
+        setEnrolledPersonal([...enrolledPersonal, courseId]);
       }
     } catch (err) {
       console.error("Failed to enroll:", err);
@@ -241,8 +298,15 @@ export default function LearnTubePage() {
                     <Play className="text-theme-bg fill-theme-bg ml-1" size={32} />
                   </div>
                 </div>
-                <div className="absolute top-4 right-4 px-3 py-1 rounded-full bg-theme-bg/60 backdrop-blur-md border border-theme-border text-[10px] font-black uppercase tracking-widest text-theme-text">
-                  {course.category || "General"}
+                <div className="absolute top-4 right-4 flex flex-col gap-2 items-end">
+                  <div className="px-3 py-1 rounded-full bg-theme-bg/60 backdrop-blur-md border border-theme-border text-[10px] font-black uppercase tracking-widest text-theme-text">
+                    {course.category || "General"}
+                  </div>
+                  {enrolledInstitution.includes(course._id) && (
+                    <div className="px-3 py-1 rounded-full bg-amber-500/20 backdrop-blur-md border border-amber-500/30 text-[10px] font-black uppercase tracking-widest text-amber-500">
+                      Already enrolled via Institution
+                    </div>
+                  )}
                 </div>
               </div>
               
@@ -281,9 +345,9 @@ export default function LearnTubePage() {
                     </div>
                   </div>
                   
-                  {enrolledCourses.includes(course._id) ? (
+                  {enrolledPersonal.includes(course._id) ? (
                     <Link 
-                      to={`/classroom/${course._id}`}
+                      to={`/classroom/${course._id}?source=personal`}
                       className="w-full py-4 rounded-2xl bg-theme-text/5 border border-theme-border text-theme-text text-sm font-black uppercase tracking-widest hover:bg-theme-text/10 transition-all text-center"
                     >
                       Continue Learning
@@ -295,6 +359,20 @@ export default function LearnTubePage() {
                     >
                       <Plus size={18} />
                       Enroll Now
+                    </button>
+                  )}
+
+                  {user?.role === 'institution-admin' && user?.loginType === 'institutional' && (
+                    <button 
+                      onClick={() => handleRecommend(course._id)}
+                      className={cn(
+                        "w-full py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all border",
+                        recommendedByInst.includes(course._id)
+                          ? "bg-theme-text text-theme-bg border-theme-text"
+                          : "bg-transparent text-theme-text-muted border-theme-border hover:border-theme-text/30"
+                      )}
+                    >
+                      {recommendedByInst.includes(course._id) ? "Recommended to Students" : "Recommend to Students"}
                     </button>
                   )}
                 </div>

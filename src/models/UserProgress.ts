@@ -6,7 +6,10 @@ const UserProgressSchema = new mongoose.Schema({
   completedLessons: [{ type: String }],
   isCompleted: { type: Boolean, default: false },
   rating: { type: Number, default: 0 },
+  enrollmentSource: { type: String, enum: ['personal', 'institution'], default: 'personal' },
   lastAccessed: { type: Date, default: Date.now },
 });
+
+UserProgressSchema.index({ userId: 1, courseId: 1, enrollmentSource: 1 }, { unique: true });
 
 export const UserProgress = mongoose.model('UserProgress', UserProgressSchema);

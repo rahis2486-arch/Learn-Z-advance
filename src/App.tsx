@@ -17,6 +17,7 @@ import AssistantPage from "./pages/AssistantPage";
 import LandingPage from "./pages/LandingPage";
 import MemoryPage from "./pages/MemoryPage";
 import LearnTubePage from "./pages/LearnTubePage";
+import InstuTubePage from "./pages/InstuTubePage";
 import AdminPage from "./pages/AdminPage";
 import LoginPage from "./pages/LoginPage";
 import MathTutorPage from "./pages/MathTutorPage";
@@ -99,11 +100,16 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (v: boolea
   const navItems = [
     { icon: PlayCircle, label: "Classroom", path: "/classroom" },
     { icon: BookOpen, label: "LearnTube", path: "/learntube" },
+    { icon: Sparkles, label: "InstuTube", path: "/instutube", institutionalOnly: true },
     { icon: Calculator, label: "Math Tutor", path: "/math-tutor" },
     { icon: Bot, label: "Nova Assistant", path: "/assistant" },
     { icon: Brain, label: "Neural Core", path: "/memory" },
     { icon: ShieldCheck, label: "Admin Panel", path: "/admin", adminOnly: true },
-  ].filter(item => !item.adminOnly || user?.role === 'admin');
+  ].filter(item => {
+    if (item.adminOnly && user?.role !== 'admin') return false;
+    if ((item as any).institutionalOnly && user?.loginType !== 'institutional') return false;
+    return true;
+  });
 
   return (
     <>
@@ -411,6 +417,11 @@ function AppContent({ isSidebarOpen, setIsOpen }: { isSidebarOpen: boolean, setI
             <Route path="/learntube" element={
               <ProtectedRoute>
                 <LearnTubePage />
+              </ProtectedRoute>
+            } />
+            <Route path="/instutube" element={
+              <ProtectedRoute>
+                <InstuTubePage />
               </ProtectedRoute>
             } />
             <Route path="/memory" element={

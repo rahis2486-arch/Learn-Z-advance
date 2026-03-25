@@ -1,4 +1,5 @@
 import express from "express";
+import axios from 'axios';
 import { createServer as createViteServer } from "vite";
 import { WebSocketServer } from "ws";
 import dotenv from "dotenv";
@@ -12,6 +13,7 @@ import { UserProgress } from "./src/models/UserProgress.ts";
 import { User } from "./src/models/User.ts";
 import { Institution } from "./src/models/Institution.ts";
 import { Category } from "./src/models/Category.ts";
+import { Recommendation } from "./src/models/Recommendation.ts";
 
 dotenv.config();
 
@@ -143,8 +145,20 @@ async function startServer() {
   // Auth Sync
   app.post("/api/auth/sync", async (req, res) => {
     try {
-      const { uid, email, displayName, photoURL, institutionId } = req.body;
+      let { uid, email, displayName, photoURL, institutionId } = req.body;
       
+      // Convert external photoURL to base64 to ensure persistence
+      if (photoURL && photoURL.startsWith('http') && !photoURL.includes('localhost') && !photoURL.includes('.run.app')) {
+        try {
+          const response = await axios.get(photoURL, { responseType: 'arraybuffer' });
+          const contentType = response.headers['content-type'];
+          const base64 = Buffer.from(response.data, 'binary').toString('base64');
+          photoURL = `data:${contentType};base64,${base64}`;
+        } catch (err) {
+          console.error("Failed to convert photoURL to base64:", err);
+        }
+      }
+
       // If institutional login, validate email
       if (institutionId) {
         const inst = await Institution.findById(institutionId);
@@ -189,9 +203,17 @@ async function startServer() {
         if (!user.displayName && displayName) {
           user.displayName = displayName;
         }
-        // Only update photoURL if it's not already a local upload (starts with /public/uploads)
-        if (photoURL && !user.photoURL?.startsWith('/public/uploads')) {
-          user.photoURL = photoURL;
+        // Only update photoURL if it's not already a local upload or base64
+        if (photoURL && !user.photoURL?.startsWith('data:image') && !user.photoURL?.startsWith('/public/uploads')) {
+          try {
+            const response = await axios.get(photoURL, { responseType: 'arraybuffer' });
+            const contentType = response.headers['content-type'];
+            const base64 = Buffer.from(response.data, 'binary').toString('base64');
+            user.photoURL = `data:${contentType};base64,${base64}`;
+          } catch (e) {
+            console.error("Failed to convert photoURL to base64:", e);
+            user.photoURL = photoURL; // Fallback to original URL
+          }
         }
         user.lastLogin = new Date();
         
@@ -256,14 +278,16 @@ async function startServer() {
 
   app.put("/api/admin/users/:uid", isAdmin, async (req, res) => {
     try {
-      const { role, status } = req.body;
+      const { role, status, displayName, username, institutionId } = req.body;
       const user = await User.findOneAndUpdate(
         { uid: req.params.uid },
-        { role, status },
+        { role, status, displayName, username, institutionId },
         { new: true }
       );
+      if (!user) return res.status(404).json({ error: "User not found" });
       res.json(user);
     } catch (err) {
+      console.error("Admin user update error:", err);
       res.status(500).json({ error: "Failed to update user" });
     }
   });
@@ -319,6 +343,56 @@ async function startServer() {
     }
   });
 
+  // Recommendation Management
+  app.post("/api/recommendations", async (req, res) => {
+    try {
+      const { institutionId, courseId, recommendedBy } = req.body;
+      
+      // Check if user is admin of this institution
+      const user = await User.findOne({ uid: recommendedBy });
+      if (!user || user.role !== 'admin' || user.institutionId?.toString() !== institutionId) {
+        return res.status(403).json({ error: "Only institution admins can recommend courses" });
+      }
+
+      const recommendation = new Recommendation({ institutionId, courseId, recommendedBy });
+      await recommendation.save();
+      res.json(recommendation);
+    } catch (err) {
+      if ((err as any).code === 11000) {
+        return res.status(400).json({ error: "Course already recommended" });
+      }
+      res.status(500).json({ error: "Failed to recommend course" });
+    }
+  });
+
+  app.get("/api/recommendations/:institutionId", async (req, res) => {
+    try {
+      const recommendations = await Recommendation.find({ institutionId: req.params.institutionId })
+        .populate("courseId")
+        .sort({ createdAt: -1 });
+      res.json(recommendations.map(r => r.courseId));
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch recommendations" });
+    }
+  });
+
+  app.delete("/api/recommendations/:institutionId/:courseId", async (req, res) => {
+    try {
+      const { institutionId, courseId } = req.params;
+      const uid = req.headers['x-user-uid'];
+      
+      const user = await User.findOne({ uid });
+      if (!user || user.role !== 'admin' || user.institutionId?.toString() !== institutionId) {
+        return res.status(403).json({ error: "Only institution admins can remove recommendations" });
+      }
+
+      await Recommendation.findOneAndDelete({ institutionId, courseId });
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to remove recommendation" });
+    }
+  });
+
   // User Profile Update
   app.put("/api/users/:uid", async (req, res) => {
     try {
@@ -357,10 +431,18 @@ async function startServer() {
   app.post("/api/users/:uid/profile-picture", upload.single("photo"), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-      const photoURL = `/public/uploads/${req.file.filename}`;
+      
+      // Read file and convert to base64
+      const filePath = path.join(process.cwd(), 'public', 'uploads', req.file.filename);
+      const fileData = fs.readFileSync(filePath);
+      const base64Image = `data:${req.file.mimetype};base64,${fileData.toString('base64')}`;
+      
+      // Delete the temporary file
+      fs.unlinkSync(filePath);
+
       const user = await User.findOneAndUpdate(
         { uid: req.params.uid },
-        { photoURL },
+        { photoURL: base64Image },
         { new: true }
       );
       if (!user) return res.status(404).json({ error: "User not found" });
@@ -617,14 +699,20 @@ async function startServer() {
 
   app.post("/api/enroll", async (req, res) => {
     try {
-      const { userId, courseId } = req.body;
-      const existing = await (UserProgress as any).findOne({ userId, courseId });
+      const { userId, courseId, enrollmentSource = 'personal' } = req.body;
+      const existing = await (UserProgress as any).findOne({ userId, courseId, enrollmentSource });
       if (existing) return res.json(existing);
       
-      const progress = new UserProgress({ userId, courseId, completedLessons: [] });
+      const progress = new UserProgress({ 
+        userId, 
+        courseId, 
+        completedLessons: [],
+        enrollmentSource 
+      });
       await progress.save();
       res.json(progress);
     } catch (err) {
+      console.error("Enrollment error:", err);
       res.status(500).json({ error: "Failed to enroll" });
     }
   });
@@ -632,7 +720,8 @@ async function startServer() {
   app.post("/api/progress/:uid/:courseId/lesson/:lessonId", async (req, res) => {
     try {
       const { uid, courseId, lessonId } = req.params;
-      const progress = await (UserProgress as any).findOne({ userId: uid, courseId });
+      const { enrollmentSource = 'personal' } = req.query;
+      const progress = await (UserProgress as any).findOne({ userId: uid, courseId, enrollmentSource });
       if (!progress) return res.status(404).json({ error: "Enrollment not found" });
 
       if (!progress.completedLessons.includes(lessonId)) {
@@ -641,6 +730,7 @@ async function startServer() {
       }
       res.json(progress);
     } catch (err) {
+      console.error("Progress update error:", err);
       res.status(500).json({ error: "Failed to update progress" });
     }
   });
@@ -648,9 +738,9 @@ async function startServer() {
   app.post("/api/progress/:uid/:courseId/complete", async (req, res) => {
     try {
       const { uid, courseId } = req.params;
-      const { rating } = req.body;
+      const { rating, enrollmentSource = 'personal' } = req.body;
       
-      const progress = await (UserProgress as any).findOne({ userId: uid, courseId });
+      const progress = await (UserProgress as any).findOne({ userId: uid, courseId, enrollmentSource });
       if (!progress) return res.status(404).json({ error: "Enrollment not found" });
 
       progress.isCompleted = true;

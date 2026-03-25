@@ -5,7 +5,7 @@ const UserSchema = new mongoose.Schema({
   email: { type: String, required: true },
   displayName: String,
   photoURL: String,
-  role: { type: String, enum: ['admin', 'user'], default: 'user' },
+  role: { type: String, enum: ['admin', 'user', 'institution-admin', 'staff'], default: 'user' },
   status: { type: String, enum: ['active', 'deactivated'], default: 'active' },
   onboardingCompleted: { type: Boolean, default: false },
   loginType: { type: String, enum: ['personal', 'institutional'], default: 'personal' },

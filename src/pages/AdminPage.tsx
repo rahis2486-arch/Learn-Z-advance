@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Navigate } from "react-router-dom";
 import { 
   Plus, Trash2, Edit2, Save, X, 
   LayoutDashboard, BookOpen, Video, 
@@ -19,9 +19,11 @@ interface User {
   email: string;
   displayName: string;
   photoURL: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'user' | 'institution-admin' | 'staff';
   status: 'active' | 'deactivated';
   lastLogin: string;
+  username?: string;
+  institutionId?: string;
 }
 
 interface Course {
@@ -137,6 +139,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [institutionSearchQuery, setInstitutionSearchQuery] = useState("");
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedInstitution, setSelectedInstitution] = useState<Institution | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
@@ -187,7 +190,10 @@ export default function AdminPage() {
   });
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [roleFilter, setRoleFilter] = useState<"all" | "admin" | "user">("all");
+  const [roleFilter, setRoleFilter] = useState<"all" | "admin" | "user" | "institution-admin" | "staff">("all");
+  const [isEditingUser, setIsEditingUser] = useState(false);
+  const [selectedUserForEdit, setSelectedUserForEdit] = useState<User | null>(null);
+  const [userForm, setUserForm] = useState({ displayName: "", username: "", role: "user" as User['role'], status: "active" as User['status'], institutionId: "" });
 
   useEffect(() => {
     if (activeTab === "courses") {
@@ -195,12 +201,17 @@ export default function AdminPage() {
       fetchCategories();
     } else if (activeTab === "users") {
       fetchUsers();
+      fetchInstitutions();
     } else if (activeTab === "institutions") {
       fetchInstitutions();
     } else if (activeTab === "categories") {
       fetchCategories();
     }
   }, [activeTab]);
+
+  if (!currentUser || currentUser.role !== 'admin') {
+    return <Navigate to="/learntube" replace />;
+  }
 
   const fetchCategories = async () => {
     try {
@@ -405,6 +416,10 @@ export default function AdminPage() {
   };
 
   const updateUser = async (uid: string, updates: Partial<User>) => {
+    if (updates.role === 'institution-admin' && !updates.institutionId) {
+      alert("Please select an institution for the Institution Admin role.");
+      return;
+    }
     try {
       const res = await fetch(`/api/admin/users/${uid}`, {
         method: "PUT",
@@ -416,10 +431,23 @@ export default function AdminPage() {
       });
       if (res.ok) {
         fetchUsers();
+        setIsEditingUser(false);
       }
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handleEditUser = (u: User) => {
+    setSelectedUserForEdit(u);
+    setUserForm({
+      displayName: u.displayName || "",
+      username: u.username || "",
+      role: u.role,
+      status: u.status,
+      institutionId: u.institutionId || ""
+    });
+    setIsEditingUser(true);
   };
 
   useEffect(() => {
@@ -737,6 +765,17 @@ export default function AdminPage() {
                       className="pl-10 pr-4 py-2 bg-theme-card border border-theme-border rounded-xl text-sm focus:ring-2 focus:ring-theme-accent/50 outline-none"
                     />
                   </div>
+                  <select 
+                    value={roleFilter}
+                    onChange={(e) => setRoleFilter(e.target.value as any)}
+                    className="px-4 py-2 bg-theme-card border border-theme-border rounded-xl text-xs font-bold text-theme-text/60 focus:ring-2 focus:ring-theme-accent/50 outline-none appearance-none cursor-pointer hover:bg-theme-text/5 transition-colors"
+                  >
+                    <option value="all">All Roles</option>
+                    <option value="user">User</option>
+                    <option value="staff">Staff</option>
+                    <option value="institution-admin">Institution Admin</option>
+                    <option value="admin">Admin</option>
+                  </select>
                   <div className="flex items-center gap-2 px-4 py-2 bg-theme-card border border-theme-border rounded-xl text-xs font-bold text-theme-text/40">
                     <Users size={14} />
                     {users.length} Total Users
@@ -770,10 +809,13 @@ export default function AdminPage() {
                         <td className="p-6">
                           <div className={cn(
                             "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                            u.role === 'admin' ? "bg-emerald-500/10 text-emerald-500" : "bg-blue-500/10 text-blue-400"
+                            u.role === 'admin' ? "bg-emerald-500/10 text-emerald-500" : 
+                            u.role === 'institution-admin' ? "bg-amber-500/10 text-amber-500" :
+                            u.role === 'staff' ? "bg-purple-500/10 text-purple-400" :
+                            "bg-blue-500/10 text-blue-400"
                           )}>
                             <Shield size={10} />
-                            {u.role}
+                            {u.role.replace('-', ' ')}
                           </div>
                         </td>
                         <td className="p-6">
@@ -791,11 +833,11 @@ export default function AdminPage() {
                         <td className="p-6">
                           <div className="flex items-center justify-end gap-2">
                             <button 
-                              onClick={() => updateUser(u.uid, { role: u.role === 'admin' ? 'user' : 'admin' })}
+                              onClick={() => handleEditUser(u)}
                               className="p-2 hover:bg-theme-text/10 rounded-lg text-theme-text/40 hover:text-theme-text transition-colors"
-                              title="Change Role"
+                              title="Edit User"
                             >
-                              <Shield size={18} />
+                              <Edit2 size={18} />
                             </button>
                             <button 
                               onClick={() => updateUser(u.uid, { status: u.status === 'active' ? 'deactivated' : 'active' })}
@@ -1487,6 +1529,181 @@ export default function AdminPage() {
                 >
                   <CheckCircle2 size={18} />
                   {editingLessonId ? "Update Lesson" : "Create Lesson"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isEditingUser && selectedUserForEdit && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsEditingUser(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-4xl bg-theme-card border border-theme-border rounded-[32px] shadow-2xl overflow-hidden flex flex-col h-[85vh]"
+            >
+              <div className="p-8 border-b border-theme-border flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-theme-accent/10 flex items-center justify-center">
+                    <Edit2 size={24} className="text-theme-accent" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black tracking-tight">Edit User</h3>
+                    <p className="text-xs text-theme-text/40 font-bold uppercase tracking-widest">{selectedUserForEdit.email}</p>
+                  </div>
+                </div>
+                <button onClick={() => setIsEditingUser(false)} className="p-2 hover:bg-theme-text/5 rounded-full transition-colors">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-8 space-y-8 overflow-y-auto flex-1">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="space-y-6">
+                    <div className="space-y-4">
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">User Information</h4>
+                      <div className="space-y-4">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-theme-text/60 ml-1">Full Name</label>
+                          <input 
+                            type="text"
+                            value={userForm.displayName}
+                            onChange={(e) => setUserForm({ ...userForm, displayName: e.target.value })}
+                            className="w-full px-4 py-3 bg-theme-bg border border-theme-border rounded-xl text-sm focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-theme-text/60 ml-1">Username</label>
+                          <input 
+                            type="text"
+                            value={userForm.username}
+                            onChange={(e) => setUserForm({ ...userForm, username: e.target.value })}
+                            className="w-full px-4 py-3 bg-theme-bg border border-theme-border rounded-xl text-sm focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h4 className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Status & Role</h4>
+                      <div className="space-y-4">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-theme-text/60 ml-1">Role</label>
+                          <select 
+                            value={userForm.role}
+                            onChange={(e) => setUserForm({ ...userForm, role: e.target.value as User['role'] })}
+                            className="w-full px-4 py-3 bg-theme-bg border border-theme-border rounded-xl text-sm focus:ring-2 focus:ring-theme-accent/50 outline-none appearance-none"
+                          >
+                            <option value="user">User</option>
+                            <option value="staff">Staff</option>
+                            <option value="institution-admin">Institution Admin</option>
+                            <option value="admin">Admin</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-theme-text/60 ml-1">Status</label>
+                          <select 
+                            value={userForm.status}
+                            onChange={(e) => setUserForm({ ...userForm, status: e.target.value as User['status'] })}
+                            className="w-full px-4 py-3 bg-theme-bg border border-theme-border rounded-xl text-sm focus:ring-2 focus:ring-theme-accent/50 outline-none appearance-none"
+                          >
+                            <option value="active">Active</option>
+                            <option value="deactivated">Deactivated</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    {userForm.role === 'institution-admin' && (
+                      <div className="space-y-4 h-full flex flex-col">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Linked Institution (Required)</h4>
+                        </div>
+                        
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-text/30" size={14} />
+                          <input 
+                            type="text"
+                            placeholder="Search institutions..."
+                            value={institutionSearchQuery}
+                            onChange={(e) => setInstitutionSearchQuery(e.target.value)}
+                            className="w-full pl-9 pr-4 py-2 bg-theme-bg border border-theme-border rounded-xl text-xs focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                          />
+                        </div>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 overflow-y-auto flex-1 pr-2">
+                          {institutions
+                            .filter(inst => inst.name.toLowerCase().includes(institutionSearchQuery.toLowerCase()))
+                            .map(inst => (
+                              <button
+                                key={inst._id}
+                                onClick={() => setUserForm({ ...userForm, institutionId: inst._id })}
+                                className={cn(
+                                  "flex items-center p-3 rounded-2xl border transition-all text-left gap-3",
+                                  userForm.institutionId === inst._id
+                                    ? "bg-theme-accent/10 border-theme-accent ring-1 ring-theme-accent/20"
+                                    : "bg-theme-bg border-theme-border hover:border-theme-text/30"
+                                )}
+                              >
+                                <div className="w-10 h-10 rounded-xl bg-white p-1.5 flex items-center justify-center border border-theme-border shrink-0">
+                                  {inst.logoUrl ? (
+                                    <img src={inst.logoUrl} alt={inst.name} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                                  ) : (
+                                    <Building2 size={20} className="text-theme-text/20" />
+                                  )}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold truncate">{inst.name}</p>
+                                  {inst.location && (
+                                    <p className="text-[10px] text-theme-text/40 font-medium truncate">{inst.location}</p>
+                                  )}
+                                </div>
+                              </button>
+                            ))}
+                          {institutions.length === 0 && (
+                            <div className="col-span-full py-10 text-center text-theme-text/40 text-xs italic">
+                              No institutions found.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {userForm.role !== 'institution-admin' && (
+                      <div className="h-full flex items-center justify-center border-2 border-dashed border-theme-border rounded-[32px] p-8 text-center bg-theme-text/[0.01]">
+                        <div className="space-y-2">
+                          <Building2 size={32} className="mx-auto text-theme-text/10" />
+                          <p className="text-xs text-theme-text/40 font-medium">Institution selection is only required for Institution Admin role.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-8 bg-theme-text/[0.02] border-t border-theme-border flex gap-3">
+                <button 
+                  onClick={() => setIsEditingUser(false)}
+                  className="flex-1 px-6 py-3 border border-theme-border rounded-xl font-bold text-sm hover:bg-theme-text/5 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => updateUser(selectedUserForEdit.uid, userForm)}
+                  className="flex-1 px-6 py-3 bg-theme-accent text-white font-bold rounded-xl hover:opacity-90 transition-opacity shadow-lg shadow-theme-accent/20"
+                >
+                  Save Changes
                 </button>
               </div>
             </motion.div>

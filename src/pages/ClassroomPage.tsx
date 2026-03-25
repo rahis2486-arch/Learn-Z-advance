@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   ChevronLeft, ChevronRight, Play, CheckCircle2, 
@@ -34,6 +34,8 @@ interface Lesson {
 
 export default function ClassroomPage() {
   const { courseId } = useParams();
+  const [searchParams] = useSearchParams();
+  const source = searchParams.get('source') || 'personal';
   const navigate = useNavigate();
   const { user } = useAuth();
   const [course, setCourse] = useState<Course | null>(null);
@@ -43,6 +45,7 @@ export default function ClassroomPage() {
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<"content" | "notes" | "transcript">("content");
+  const [classroomTab, setClassroomTab] = useState<"personal" | "institution">("personal");
   const [isRatingModalOpen, setIsRatingModalOpen] = useState(false);
   const [rating, setRating] = useState(0);
   const [isSubmittingRating, setIsSubmittingRating] = useState(false);
@@ -114,7 +117,9 @@ export default function ClassroomPage() {
         const progressRes = await fetch(`/api/progress/${user.uid}`);
         if (progressRes.ok) {
           const allProgress = await progressRes.json();
-          const currentProgress = allProgress.find((p: any) => p.courseId?._id === courseId);
+          const currentProgress = allProgress.find((p: any) => 
+            p.courseId?._id === courseId && (p.enrollmentSource || 'personal') === source
+          );
           setUserProgress(currentProgress);
         }
       }
@@ -129,7 +134,7 @@ export default function ClassroomPage() {
   const handleMarkLessonComplete = async () => {
     if (!user || !courseId || !currentLesson) return;
     try {
-      const res = await fetch(`/api/progress/${user.uid}/${courseId}/lesson/${currentLesson._id}`, {
+      const res = await fetch(`/api/progress/${user.uid}/${courseId}/lesson/${currentLesson._id}?enrollmentSource=${source}`, {
         method: 'POST'
       });
       if (res.ok) {
@@ -154,7 +159,7 @@ export default function ClassroomPage() {
       const res = await fetch(`/api/progress/${user.uid}/${courseId}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rating })
+        body: JSON.stringify({ rating, enrollmentSource: source })
       });
       if (res.ok) {
         const updatedProgress = await res.json();
@@ -188,17 +193,48 @@ export default function ClassroomPage() {
   if (!course) {
     if (!courseId) {
       return (
-        <div className="h-full flex flex-col bg-[#050505] p-6 lg:p-10">
+        <div className="h-full flex flex-col bg-theme-bg p-6 lg:p-10">
           <header className="mb-10">
-            <h1 className="text-3xl font-bold tracking-tight mb-2">
+            <h1 className="text-3xl font-bold tracking-tight mb-2 text-theme-text">
               Welcome back, {user?.displayName?.split(' ')[0]}!
             </h1>
-            <p className="text-white/40">Select a course to continue your learning journey.</p>
+            <p className="text-theme-text-muted">Select a course to continue your learning journey.</p>
           </header>
 
-          {myCourses.length > 0 ? (
+          {user?.loginType === 'institutional' && (
+            <div className="flex gap-1 p-1 bg-theme-text/5 rounded-2xl w-fit mb-8">
+              <button
+                onClick={() => setClassroomTab("personal")}
+                className={cn(
+                  "px-6 py-2.5 rounded-xl text-sm font-bold transition-all",
+                  classroomTab === "personal" ? "bg-theme-card text-theme-text shadow-lg" : "text-theme-text-muted hover:text-theme-text"
+                )}
+              >
+                Personal Courses
+              </button>
+              <button
+                onClick={() => setClassroomTab("institution")}
+                className={cn(
+                  "px-6 py-2.5 rounded-xl text-sm font-bold transition-all",
+                  classroomTab === "institution" ? "bg-theme-card text-theme-text shadow-lg" : "text-theme-text-muted hover:text-theme-text"
+                )}
+              >
+                Institution Courses
+              </button>
+            </div>
+          )}
+
+          {myCourses.filter(p => {
+            if (user?.loginType !== 'institutional') return true;
+            const source = p.enrollmentSource || 'personal';
+            return source === classroomTab;
+          }).length > 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-              {myCourses.map((progress) => (
+              {myCourses.filter(p => {
+                if (user?.loginType !== 'institutional') return true;
+                const source = p.enrollmentSource || 'personal';
+                return source === classroomTab;
+              }).map((progress) => (
                 <motion.div
                   key={progress._id}
                   whileHover={{ y: -5 }}
@@ -250,16 +286,19 @@ export default function ClassroomPage() {
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center space-y-6">
-              <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center">
-                <BookOpen size={40} className="text-white/20" />
+              <div className="w-20 h-20 bg-theme-text/5 rounded-full flex items-center justify-center">
+                <BookOpen size={40} className="text-theme-text/20" />
               </div>
               <div className="text-center space-y-2">
-                <h2 className="text-2xl font-bold">No courses enrolled yet</h2>
-                <p className="text-white/40">Head over to LearnTube to find your first course!</p>
+                <h2 className="text-2xl font-bold text-theme-text">No courses enrolled yet</h2>
+                <p className="text-theme-text-muted">Head over to LearnTube to find your first course!</p>
               </div>
               <button 
                 onClick={() => navigate("/learntube")}
-                className="px-6 py-2 bg-emerald-500 text-black font-bold rounded-xl hover:bg-emerald-400 transition-colors"
+                className={cn(
+                  "px-6 py-2 font-bold rounded-xl transition-colors",
+                  theme === 'light' ? "bg-indigo-600 text-white hover:bg-indigo-500" : "bg-emerald-500 text-black hover:bg-emerald-400"
+                )}
               >
                 Browse Courses
               </button>
@@ -511,7 +550,10 @@ export default function ClassroomPage() {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -10 }}
-                      className="prose prose-invert max-w-none"
+                      className={cn(
+                        "prose max-w-none",
+                        theme === 'dark' ? "prose-invert" : "prose-slate"
+                      )}
                     >
                       <h2 className="text-2xl font-bold mb-4">{currentLesson?.title}</h2>
                       <p className="text-theme-text/60 leading-relaxed">

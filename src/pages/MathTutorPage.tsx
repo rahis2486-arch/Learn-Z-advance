@@ -142,15 +142,15 @@ export default function MathTutorPage() {
   };
 
   const SidebarContent = () => (
-    <div className="flex flex-col h-full bg-[#0D0D0D]">
-      <div className="p-4 flex items-center justify-between border-b border-white/10">
-        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-          <History size={18} className="text-emerald-400" />
+    <div className="flex flex-col h-full bg-theme-sidebar">
+      <div className="p-4 flex items-center justify-between border-b border-theme-border">
+        <h2 className="text-lg font-semibold text-theme-text flex items-center gap-2">
+          <History size={18} className="text-theme-accent" />
           Sessions
         </h2>
         <button 
           onClick={handleNewSession}
-          className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+          className="p-2 rounded-lg bg-theme-accent/10 text-theme-accent hover:bg-theme-accent/20 transition-colors"
         >
           <Plus size={20} />
         </button>
@@ -167,12 +167,12 @@ export default function MathTutorPage() {
             className={cn(
               "group flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all duration-200",
               currentSession?._id === session._id 
-                ? "bg-white/10 text-white" 
-                : "text-white/50 hover:bg-white/5 hover:text-white"
+                ? "bg-theme-accent/10 text-theme-accent" 
+                : "text-theme-text-muted hover:bg-theme-text/5 hover:text-theme-text"
             )}
           >
             <div className="flex items-center gap-3 overflow-hidden">
-              <MessageSquare size={16} className={currentSession?._id === session._id ? "text-emerald-400" : ""} />
+              <MessageSquare size={16} className={currentSession?._id === session._id ? "text-theme-accent" : ""} />
               <span className="truncate text-sm font-medium">{session.title}</span>
             </div>
             <button 
@@ -187,14 +187,16 @@ export default function MathTutorPage() {
     </div>
   );
 
+  const { theme } = useAssistant();
+
   return (
-    <div className="flex h-[calc(100vh-64px)] bg-[#050505] overflow-hidden relative">
+    <div className="flex h-[calc(100vh-64px)] bg-theme-bg overflow-hidden relative">
       {/* Desktop Sidebar */}
       <motion.aside
         initial={false}
         animate={{ width: sidebarOpen ? 300 : 0 }}
         className={cn(
-          "hidden lg:flex flex-col border-r border-white/10 transition-all duration-300 overflow-hidden",
+          "hidden lg:flex flex-col border-r border-theme-border transition-all duration-300 overflow-hidden",
           !sidebarOpen && "border-none"
         )}
       >
@@ -223,7 +225,7 @@ export default function MathTutorPage() {
               <SidebarContent />
               <button 
                 onClick={() => setMobileSidebarOpen(false)}
-                className="absolute top-4 right-4 p-2 text-white/60 hover:text-white"
+                className="absolute top-4 right-4 p-2 text-theme-text-muted hover:text-theme-text"
               >
                 <X size={20} />
               </button>
@@ -235,57 +237,60 @@ export default function MathTutorPage() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col relative min-w-0">
         {/* Header Bar */}
-        <div className="h-16 flex items-center justify-between px-4 border-b border-white/10 bg-[#050505]/80 backdrop-blur-xl z-30">
+        <div className="h-16 flex items-center justify-between px-4 border-b border-theme-border bg-theme-header backdrop-blur-xl z-30">
           <div className="flex items-center gap-3">
             <button
               onClick={() => navigate(-1)}
-              className="p-2 rounded-lg hover:bg-white/5 text-white/60 hover:text-white transition-all"
+              className="p-2 rounded-lg hover:bg-theme-text/5 text-theme-text-muted hover:text-theme-text transition-all"
               title="Back"
             >
               <ArrowLeft size={20} />
             </button>
             <button
               onClick={() => setMobileSidebarOpen(true)}
-              className="lg:hidden p-2 rounded-lg hover:bg-white/5 text-white/60 hover:text-white transition-all"
+              className="lg:hidden p-2 rounded-lg hover:bg-theme-text/5 text-theme-text-muted hover:text-theme-text transition-all"
             >
               <Menu size={20} />
             </button>
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="hidden lg:flex p-2 rounded-lg hover:bg-white/5 text-white/60 hover:text-white transition-all"
+              className="hidden lg:flex p-2 rounded-lg hover:bg-theme-text/5 text-theme-text-muted hover:text-theme-text transition-all"
             >
               {sidebarOpen ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
             </button>
             <div className="flex flex-col">
-              <h1 className="text-sm font-bold text-white truncate max-w-[150px] md:max-w-xs">
+              <h1 className="text-sm font-bold text-theme-text truncate max-w-[150px] md:max-w-xs">
                 {currentSession?.title || "Math Tutor Canvas"}
               </h1>
-              <span className="text-[10px] text-emerald-400 uppercase tracking-widest font-bold">
+              <span className="text-[10px] text-theme-accent uppercase tracking-widest font-bold">
                 Neural Learning Engine
               </span>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] text-emerald-500 font-bold uppercase tracking-tighter">Live Session</span>
+            <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-theme-accent/10 border border-theme-accent/20">
+              <div className={cn("w-1.5 h-1.5 rounded-full animate-pulse", theme === 'light' ? "bg-indigo-600" : "bg-emerald-500")} />
+              <span className="text-[10px] text-theme-accent font-bold uppercase tracking-tighter">Live Session</span>
             </div>
           </div>
         </div>
 
         {!currentSession ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-20 h-20 rounded-3xl bg-emerald-500/20 flex items-center justify-center mb-6 animate-pulse">
-              <Sparkles className="text-emerald-400 w-10 h-10" />
+            <div className="w-20 h-20 rounded-3xl bg-theme-accent/20 flex items-center justify-center mb-6 animate-pulse">
+              <Sparkles className="text-theme-accent w-10 h-10" />
             </div>
-            <h1 className="text-3xl font-bold text-white mb-4">Math Tutor Canvas</h1>
-            <p className="text-white/60 max-w-md mb-8">
+            <h1 className="text-3xl font-bold text-theme-text mb-4">Math Tutor Canvas</h1>
+            <p className="text-theme-text-muted max-w-md mb-8">
               Welcome to your intelligent math workspace. Upload a problem or type it out, and let's explore the "why" and "how" together.
             </p>
             <button
               onClick={handleNewSession}
-              className="px-8 py-3 rounded-2xl bg-emerald-500 text-black font-bold hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20"
+              className={cn(
+                "px-8 py-3 rounded-2xl font-bold transition-all shadow-lg",
+                theme === 'light' ? "bg-indigo-600 text-white hover:bg-indigo-500 shadow-indigo-600/20" : "bg-emerald-500 text-black hover:bg-emerald-400 shadow-emerald-500/20"
+              )}
             >
               Start New Session
             </button>
@@ -306,10 +311,10 @@ export default function MathTutorPage() {
                       { icon: Camera, title: "Visual Analysis", desc: "Upload photos of your handwritten work." },
                       { icon: Sparkles, title: "Nova Integration", desc: "Nova assists you with voice and vision." }
                     ].map((item, i) => (
-                      <div key={i} className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-emerald-500/30 transition-all group">
-                        <item.icon className="text-emerald-400 mb-4 group-hover:scale-110 transition-transform" size={24} />
-                        <h3 className="text-white font-semibold mb-2">{item.title}</h3>
-                        <p className="text-white/40 text-sm">{item.desc}</p>
+                      <div key={i} className="p-6 rounded-2xl bg-theme-card border border-theme-border hover:border-theme-accent/30 transition-all group">
+                        <item.icon className="text-theme-accent mb-4 group-hover:scale-110 transition-transform" size={24} />
+                        <h3 className="text-theme-text font-semibold mb-2">{item.title}</h3>
+                        <p className="text-theme-text-muted text-sm">{item.desc}</p>
                       </div>
                     ))}
                   </div>
@@ -327,7 +332,9 @@ export default function MathTutorPage() {
                   >
                     <div className={cn(
                       "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                      msg.role === 'user' ? "bg-emerald-500 text-black" : "bg-white/10 text-emerald-400"
+                      msg.role === 'user' 
+                        ? (theme === 'light' ? "bg-indigo-600 text-white" : "bg-emerald-500 text-black") 
+                        : "bg-theme-text/10 text-theme-accent"
                     )}>
                       {msg.role === 'user' ? user?.displayName?.[0] : <Sparkles size={16} />}
                     </div>
@@ -336,17 +343,20 @@ export default function MathTutorPage() {
                       msg.role === 'user' ? "items-end" : "items-start"
                     )}>
                       {msg.image && (
-                        <div className="rounded-2xl overflow-hidden border border-white/10 mb-2">
+                        <div className="rounded-2xl overflow-hidden border border-theme-border mb-2">
                           <img src={msg.image} alt="Math Problem" className="max-h-64 object-contain bg-black/40" />
                         </div>
                       )}
                       <div className={cn(
                         "p-4 rounded-2xl text-sm leading-relaxed",
                         msg.role === 'user' 
-                          ? "bg-emerald-500/10 text-white border border-emerald-500/20" 
-                          : "bg-white/5 text-white/90 border border-white/10 backdrop-blur-md"
+                          ? "bg-theme-accent/10 text-theme-text border border-theme-accent/20" 
+                          : "bg-theme-card text-theme-text/90 border border-theme-border backdrop-blur-md"
                       )}>
-                        <div className="markdown-body prose prose-invert prose-sm max-w-none">
+                        <div className={cn(
+                          "markdown-body prose prose-sm max-w-none",
+                          theme === 'dark' ? "prose-invert" : "prose-slate"
+                        )}>
                           <ReactMarkdown>{msg.content}</ReactMarkdown>
                         </div>
                       </div>
@@ -355,12 +365,12 @@ export default function MathTutorPage() {
                 ))}
                 {loading && (
                   <div className="flex gap-4">
-                    <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center animate-pulse">
-                      <Sparkles size={16} className="text-emerald-400" />
+                    <div className="w-8 h-8 rounded-lg bg-theme-text/10 flex items-center justify-center animate-pulse">
+                      <Sparkles size={16} className="text-theme-accent" />
                     </div>
-                    <div className="bg-white/5 p-4 rounded-2xl border border-white/10 flex items-center gap-3">
-                      <Loader2 size={16} className="animate-spin text-emerald-400" />
-                      <span className="text-white/40 text-sm">Nova is analyzing...</span>
+                    <div className="bg-theme-card p-4 rounded-2xl border border-theme-border flex items-center gap-3">
+                      <Loader2 size={16} className="animate-spin text-theme-accent" />
+                      <span className="text-theme-text-muted text-sm">Nova is analyzing...</span>
                     </div>
                   </div>
                 )}
@@ -368,11 +378,11 @@ export default function MathTutorPage() {
             </div>
 
             {/* Input Area */}
-            <div className="absolute bottom-0 left-0 right-0 p-2 md:p-6 bg-gradient-to-t from-[#050505] via-[#050505]/90 to-transparent z-20">
+            <div className="absolute bottom-0 left-0 right-0 p-2 md:p-6 bg-gradient-to-t from-theme-bg via-theme-bg/90 to-transparent z-20">
               <div className="max-w-4xl mx-auto">
                 <form 
                   onSubmit={handleSendMessage}
-                  className="relative bg-white/5 border border-white/10 rounded-[1.5rem] md:rounded-[2rem] p-1 md:p-2 backdrop-blur-2xl focus-within:border-white/20 transition-all shadow-2xl"
+                  className="relative bg-theme-card border border-theme-border rounded-[1.5rem] md:rounded-[2rem] p-1 md:p-2 backdrop-blur-2xl focus-within:border-theme-accent/50 transition-all shadow-2xl"
                 >
                   <AnimatePresence>
                     {image && (
@@ -380,7 +390,7 @@ export default function MathTutorPage() {
                         initial={{ opacity: 0, y: 10, scale: 0.9 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 10, scale: 0.9 }}
-                        className="absolute bottom-full left-4 mb-4 p-2 bg-white/10 rounded-2xl border border-white/20 backdrop-blur-xl shadow-2xl"
+                        className="absolute bottom-full left-4 mb-4 p-2 bg-theme-card rounded-2xl border border-theme-border backdrop-blur-xl shadow-2xl"
                       >
                         <img src={image} alt="Preview" className="h-24 md:h-32 rounded-lg object-contain" />
                         <button 
@@ -398,7 +408,7 @@ export default function MathTutorPage() {
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="p-2 md:p-3 text-white/40 hover:text-emerald-400 transition-colors shrink-0"
+                      className="p-2 md:p-3 text-theme-text-muted hover:text-theme-accent transition-colors shrink-0"
                     >
                       <Camera size={20} className="md:w-[22px] md:h-[22px]" />
                     </button>
@@ -419,7 +429,7 @@ export default function MathTutorPage() {
                         }
                       }}
                       placeholder="Ask a math question..."
-                      className="flex-1 bg-transparent border-none focus:ring-0 text-white placeholder:text-white/20 py-2 md:py-3 resize-none max-h-32 text-sm md:text-base"
+                      className="flex-1 bg-transparent border-none focus:ring-0 text-theme-text placeholder:text-theme-text-muted py-2 md:py-3 resize-none max-h-32 text-sm md:text-base"
                       rows={1}
                     />
                     <button
@@ -428,8 +438,8 @@ export default function MathTutorPage() {
                       className={cn(
                         "p-2 md:p-3 rounded-xl md:rounded-2xl transition-all shrink-0",
                         (!input.trim() && !image) || loading
-                          ? "text-white/20 cursor-not-allowed"
-                          : "bg-emerald-500 text-black hover:bg-emerald-400 shadow-lg shadow-emerald-500/20"
+                          ? "text-theme-text-muted/20 cursor-not-allowed"
+                          : (theme === 'light' ? "bg-indigo-600 text-white hover:bg-indigo-500 shadow-indigo-600/20" : "bg-emerald-500 text-black hover:bg-emerald-400 shadow-emerald-500/20")
                       )}
                     >
                       <Send size={20} className="md:w-[22px] md:h-[22px]" />
@@ -437,11 +447,11 @@ export default function MathTutorPage() {
                   </div>
                 </form>
                 <div className="flex items-center justify-center gap-4 mt-3">
-                  <span className="text-[10px] text-white/20 uppercase tracking-widest font-medium">
+                  <span className="text-[10px] text-theme-text-muted uppercase tracking-widest font-medium">
                     Nova Math Engine
                   </span>
-                  <div className="w-1 h-1 rounded-full bg-white/10" />
-                  <span className="text-[10px] text-white/20 uppercase tracking-widest font-medium">
+                  <div className="w-1 h-1 rounded-full bg-theme-border" />
+                  <span className="text-[10px] text-theme-text-muted uppercase tracking-widest font-medium">
                     Malang Code Innovators
                   </span>
                 </div>

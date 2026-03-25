@@ -7,7 +7,7 @@ interface User {
   email: string | null;
   displayName: string | null;
   photoURL: string | null;
-  role: 'admin' | 'user';
+  role: 'admin' | 'user' | 'institution-admin' | 'staff';
   status: 'active' | 'deactivated';
   onboardingCompleted: boolean;
   loginType: 'personal' | 'institutional';
