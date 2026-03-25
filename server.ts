@@ -370,8 +370,21 @@ async function startServer() {
       const recommendations = await Recommendation.find({ institutionId: req.params.institutionId })
         .populate("courseId")
         .sort({ createdAt: -1 });
-      res.json(recommendations.map(r => r.courseId));
+      
+      // Filter out recommendations where the course was deleted
+      const validCourses = recommendations
+        .map(r => r.courseId)
+        .filter(c => {
+          if (!c) {
+            console.warn(`[Recommendations] Found recommendation for deleted course in institution ${req.params.institutionId}`);
+            return false;
+          }
+          return true;
+        });
+        
+      res.json(validCourses);
     } catch (err) {
+      console.error("Failed to fetch recommendations:", err);
       res.status(500).json({ error: "Failed to fetch recommendations" });
     }
   });
@@ -600,10 +613,28 @@ async function startServer() {
 
   app.delete("/api/courses/:id", isAdmin, async (req, res) => {
     try {
-      await (Course as any).findByIdAndDelete(req.params.id);
-      await (Lesson as any).deleteMany({ courseId: req.params.id });
+      const courseId = req.params.id;
+      
+      // 1. Delete related recommendations
+      await (Recommendation as any).deleteMany({ courseId });
+      console.log(`[Cleanup] Deleted all recommendations for course ${courseId}`);
+
+      // 2. Delete non-completed enrollments, preserve completed ones for snapshots
+      const deletedEnrollments = await (UserProgress as any).deleteMany({ 
+        courseId, 
+        isCompleted: false 
+      });
+      console.log(`[Cleanup] Deleted ${deletedEnrollments.deletedCount} active enrollments for course ${courseId}`);
+
+      // 3. Delete lessons
+      await (Lesson as any).deleteMany({ courseId });
+      
+      // 4. Finally delete the course
+      await (Course as any).findByIdAndDelete(courseId);
+      
       res.json({ success: true });
     } catch (err) {
+      console.error("Failed to delete course:", err);
       res.status(500).json({ error: "Failed to delete course" });
     }
   });
@@ -691,8 +722,27 @@ async function startServer() {
   app.get("/api/progress/:userId", async (req, res) => {
     try {
       const progress = await (UserProgress as any).find({ userId: req.params.userId }).populate('courseId');
-      res.json(progress);
+      const progressWithLessonCount = await Promise.all(progress.map(async (p: any) => {
+        // If course was deleted, use snapshot if available
+        if (!p.courseId) {
+          console.warn(`[Progress] Found enrollment for deleted course in user ${req.params.userId}`);
+          return { 
+            ...p.toObject(), 
+            totalLessons: 0,
+            courseId: p.courseSnapshot ? {
+              _id: null,
+              title: p.courseSnapshot.title,
+              thumbnail: p.courseSnapshot.thumbnail,
+              deleted: true
+            } : null
+          };
+        }
+        const lessonCount = await (Lesson as any).countDocuments({ courseId: p.courseId._id });
+        return { ...p.toObject(), totalLessons: lessonCount };
+      }));
+      res.json(progressWithLessonCount);
     } catch (err) {
+      console.error("Failed to fetch progress:", err);
       res.status(500).json({ error: "Failed to fetch progress" });
     }
   });
@@ -710,6 +760,7 @@ async function startServer() {
         enrollmentSource 
       });
       await progress.save();
+      console.log(`[Enrollment] Created new enrollment: user=${userId}, course=${courseId}, source=${enrollmentSource}`);
       res.json(progress);
     } catch (err) {
       console.error("Enrollment error:", err);
@@ -720,9 +771,28 @@ async function startServer() {
   app.post("/api/progress/:uid/:courseId/lesson/:lessonId", async (req, res) => {
     try {
       const { uid, courseId, lessonId } = req.params;
-      const { enrollmentSource = 'personal' } = req.query;
-      const progress = await (UserProgress as any).findOne({ userId: uid, courseId, enrollmentSource });
-      if (!progress) return res.status(404).json({ error: "Enrollment not found" });
+      const { enrollmentSource } = req.query;
+      console.log(`[Progress Update] Marking lesson ${lessonId} as complete for user ${uid}, course ${courseId}, source ${enrollmentSource || 'any'}`);
+      
+      let progress;
+      if (enrollmentSource) {
+        progress = await (UserProgress as any).findOne({ userId: uid, courseId, enrollmentSource });
+      } else {
+        const enrollments = await (UserProgress as any).find({ userId: uid, courseId });
+        if (enrollments.length === 1) progress = enrollments[0];
+        else if (enrollments.length > 1) return res.status(400).json({ error: "Multiple enrollments found. Please specify enrollmentSource." });
+      }
+
+      if (!progress) {
+        console.warn(`[Progress Update] Enrollment not found for user ${uid}, course ${courseId}, source ${enrollmentSource}`);
+        return res.status(404).json({ error: "Enrollment not found" });
+      }
+
+      // Check if lesson quiz is completed
+      const quiz = progress.lessonQuizzes.find((q: any) => q.lessonId === lessonId);
+      if (!quiz || !quiz.completed) {
+        return res.status(403).json({ error: "Lesson quiz must be completed first" });
+      }
 
       if (!progress.completedLessons.includes(lessonId)) {
         progress.completedLessons.push(lessonId);
@@ -735,28 +805,160 @@ async function startServer() {
     }
   });
 
+  app.post("/api/progress/:uid/:courseId/quiz/:lessonId", async (req, res) => {
+    try {
+      const { uid, courseId, lessonId } = req.params;
+      const { score, totalQuestions, timeTaken, answers, feedback, enrollmentSource } = req.body;
+      console.log(`[Quiz Update] Saving quiz for lesson ${lessonId} for user ${uid}, course ${courseId}, source ${enrollmentSource || 'any'}`);
+      
+      let progress;
+      if (enrollmentSource) {
+        progress = await (UserProgress as any).findOne({ userId: uid, courseId, enrollmentSource });
+      } else {
+        const enrollments = await (UserProgress as any).find({ userId: uid, courseId });
+        if (enrollments.length === 1) progress = enrollments[0];
+        else if (enrollments.length > 1) return res.status(400).json({ error: "Multiple enrollments found. Please specify enrollmentSource." });
+      }
+
+      if (!progress) {
+        console.warn(`[Quiz Update] Enrollment not found for user ${uid}, course ${courseId}, source ${enrollmentSource}`);
+        return res.status(404).json({ error: "Enrollment not found" });
+      }
+
+      let quiz = progress.lessonQuizzes.find((q: any) => q.lessonId === lessonId);
+      if (quiz) {
+        quiz.attempts += 1;
+        quiz.score = score;
+        quiz.timeTaken = timeTaken;
+        quiz.completed = true;
+        quiz.answers = answers;
+        quiz.feedback = feedback;
+        quiz.history.push({ score, timeTaken });
+      } else {
+        progress.lessonQuizzes.push({
+          lessonId,
+          score,
+          totalQuestions,
+          timeTaken,
+          attempts: 1,
+          completed: true,
+          answers,
+          feedback,
+          history: [{ score, timeTaken }]
+        });
+      }
+      await progress.save();
+      res.json(progress);
+    } catch (err) {
+      console.error("Quiz save error:", err);
+      res.status(500).json({ error: "Failed to save quiz result" });
+    }
+  });
+
+  app.post("/api/progress/:uid/:courseId/final-test", async (req, res) => {
+    try {
+      const { uid, courseId } = req.params;
+      const { score, totalQuestions, timeTaken, answers, feedback, enrollmentSource } = req.body;
+      console.log(`[Final Test Update] Saving final test for user ${uid}, course ${courseId}, source ${enrollmentSource || 'any'}`);
+      
+      let progress;
+      if (enrollmentSource) {
+        progress = await (UserProgress as any).findOne({ userId: uid, courseId, enrollmentSource });
+      } else {
+        const enrollments = await (UserProgress as any).find({ userId: uid, courseId });
+        if (enrollments.length === 1) progress = enrollments[0];
+        else if (enrollments.length > 1) return res.status(400).json({ error: "Multiple enrollments found. Please specify enrollmentSource." });
+      }
+
+      if (!progress) {
+        console.warn(`[Final Test Update] Enrollment not found for user ${uid}, course ${courseId}, source ${enrollmentSource}`);
+        return res.status(404).json({ error: "Enrollment not found" });
+      }
+
+      if (progress.finalTest) {
+        progress.finalTest.attempts += 1;
+        progress.finalTest.score = score;
+        progress.finalTest.totalQuestions = totalQuestions;
+        progress.finalTest.timeTaken = timeTaken;
+        progress.finalTest.completed = true;
+        progress.finalTest.answers = answers;
+        progress.finalTest.feedback = feedback;
+        progress.finalTest.history.push({ score, timeTaken });
+      } else {
+        progress.finalTest = {
+          score,
+          totalQuestions,
+          timeTaken,
+          attempts: 1,
+          completed: true,
+          answers,
+          feedback,
+          history: [{ score, timeTaken }]
+        };
+      }
+      await progress.save();
+      res.json(progress);
+    } catch (err) {
+      console.error("Final test save error:", err);
+      res.status(500).json({ error: "Failed to save final test result" });
+    }
+  });
+
   app.post("/api/progress/:uid/:courseId/complete", async (req, res) => {
     try {
       const { uid, courseId } = req.params;
-      const { rating, enrollmentSource = 'personal' } = req.body;
+      const { rating, enrollmentSource } = req.body;
+      console.log(`[Course Completion] Marking course ${courseId} as complete for user ${uid}, source ${enrollmentSource || 'any'}`);
       
-      const progress = await (UserProgress as any).findOne({ userId: uid, courseId, enrollmentSource });
-      if (!progress) return res.status(404).json({ error: "Enrollment not found" });
+      let progress;
+      if (enrollmentSource) {
+        progress = await (UserProgress as any).findOne({ userId: uid, courseId, enrollmentSource });
+      } else {
+        const enrollments = await (UserProgress as any).find({ userId: uid, courseId });
+        if (enrollments.length === 1) progress = enrollments[0];
+        else if (enrollments.length > 1) return res.status(400).json({ error: "Multiple enrollments found. Please specify enrollmentSource." });
+      }
+
+      if (!progress) {
+        console.warn(`[Course Completion] Enrollment not found for user ${uid}, course ${courseId}, source ${enrollmentSource}`);
+        return res.status(404).json({ error: "Enrollment not found" });
+      }
+
+      // Enforce completion rules
+      const lessons = await Lesson.find({ courseId });
+      const allLessonsCompleted = lessons.every(l => progress.completedLessons.includes(l._id.toString()));
+      const allQuizzesCompleted = lessons.every(l => {
+        const quiz = progress.lessonQuizzes.find((q: any) => q.lessonId === l._id.toString());
+        return quiz && quiz.completed;
+      });
+      const finalTestCompleted = progress.finalTest && progress.finalTest.completed;
+
+      if (!allLessonsCompleted || !allQuizzesCompleted || !finalTestCompleted) {
+        return res.status(403).json({ 
+          error: "All lessons, quizzes, and the final test must be completed before marking the course as finished." 
+        });
+      }
 
       progress.isCompleted = true;
       if (rating) progress.rating = rating;
-      await progress.save();
-
-      if (rating) {
-        const course = await Course.findById(courseId);
-        if (course) {
+      
+      // Store course snapshot for dashboard preservation
+      const course = await Course.findById(courseId);
+      if (course) {
+        progress.courseSnapshot = {
+          title: (course as any).title,
+          thumbnail: (course as any).thumbnail
+        };
+        
+        if (rating) {
           const currentTotal = (course as any).rating * (course as any).ratingCount;
           (course as any).ratingCount += 1;
           (course as any).rating = (currentTotal + rating) / (course as any).ratingCount;
           await course.save();
         }
       }
-
+      
+      await progress.save();
       res.json(progress);
     } catch (err) {
       res.status(500).json({ error: "Failed to complete course" });

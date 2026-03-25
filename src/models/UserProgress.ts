@@ -8,6 +8,59 @@ const UserProgressSchema = new mongoose.Schema({
   rating: { type: Number, default: 0 },
   enrollmentSource: { type: String, enum: ['personal', 'institution'], default: 'personal' },
   lastAccessed: { type: Date, default: Date.now },
+  courseSnapshot: {
+    title: String,
+    thumbnail: String
+  },
+  lessonQuizzes: [{
+    lessonId: { type: String, required: true },
+    score: { type: Number, required: true },
+    totalQuestions: { type: Number, required: true },
+    timeTaken: { type: Number, required: true },
+    attempts: { type: Number, default: 1 },
+    completed: { type: Boolean, default: false },
+    answers: [{
+      question: String,
+      userAnswer: String,
+      correctAnswer: String,
+      isCorrect: Boolean,
+      explanation: String
+    }],
+    feedback: {
+      strengths: [String],
+      weaknesses: [String],
+      suggestions: [String]
+    },
+    history: [{
+      score: Number,
+      timeTaken: Number,
+      date: { type: Date, default: Date.now }
+    }]
+  }],
+  finalTest: {
+    score: { type: Number },
+    totalQuestions: { type: Number },
+    timeTaken: { type: Number },
+    attempts: { type: Number, default: 0 },
+    completed: { type: Boolean, default: false },
+    answers: [{
+      question: String,
+      userAnswer: String,
+      correctAnswer: String,
+      isCorrect: Boolean,
+      explanation: String
+    }],
+    feedback: {
+      strengths: [String],
+      weaknesses: [String],
+      suggestions: [String]
+    },
+    history: [{
+      score: Number,
+      timeTaken: Number,
+      date: { type: Date, default: Date.now }
+    }]
+  }
 });
 
 UserProgressSchema.index({ userId: 1, courseId: 1, enrollmentSource: 1 }, { unique: true });

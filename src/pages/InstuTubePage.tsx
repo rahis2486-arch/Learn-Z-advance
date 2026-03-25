@@ -110,13 +110,15 @@ export default function InstuTubePage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
-          {courses.map((course) => (
-            <motion.div
-              key={course._id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="group bg-theme-card border border-theme-border rounded-[32px] overflow-hidden hover:border-theme-accent/30 transition-all duration-500 hover:shadow-2xl hover:shadow-theme-accent/10 flex flex-col"
-            >
+          {courses.map((course) => {
+            if (!course) return null;
+            return (
+              <motion.div
+                key={course._id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="group bg-theme-card border border-theme-border rounded-[32px] overflow-hidden hover:border-theme-accent/30 transition-all duration-500 hover:shadow-2xl hover:shadow-theme-accent/10 flex flex-col"
+              >
               <div className="aspect-video relative overflow-hidden">
                 <img 
                   src={course.thumbnail} 
@@ -185,8 +187,9 @@ export default function InstuTubePage() {
                 </div>
               </div>
             </motion.div>
-          ))}
-        </div>
+          );
+        })}
+      </div>
       )}
     </div>
   );

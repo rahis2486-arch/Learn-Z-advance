@@ -5,12 +5,40 @@ import {
   ChevronLeft, ChevronRight, Play, CheckCircle2, 
   BookOpen, Video, FileText, MessageSquare, 
   Maximize2, Volume2, Settings, List,
-  Sparkles, BrainCircuit, Mic, Camera, X
+  Sparkles, BrainCircuit, Mic, Camera, X,
+  Timer, AlertCircle, Trophy, RotateCcw,
+  ArrowRight, Check, Info
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAssistant } from "../contexts/AssistantContext";
 import { useAuth } from "../contexts/AuthContext";
-import { LogIn } from "lucide-react";
+import { GoogleGenAI, Type } from "@google/genai";
+
+interface QuizQuestion {
+  question: string;
+  options: string[];
+  correctAnswer: string;
+  explanation: string;
+}
+
+interface QuizResult {
+  score: number;
+  totalQuestions: number;
+  timeTaken: number;
+  attempts?: number;
+  answers: {
+    question: string;
+    userAnswer: string;
+    correctAnswer: string;
+    isCorrect: boolean;
+    explanation: string;
+  }[];
+  feedback: {
+    strengths: string[];
+    weaknesses: string[];
+    suggestions: string[];
+  };
+}
 
 interface Course {
   _id: string;
@@ -51,6 +79,18 @@ export default function ClassroomPage() {
   const [isSubmittingRating, setIsSubmittingRating] = useState(false);
   const [userProgress, setUserProgress] = useState<any>(null);
 
+  // Quiz State
+  const [isQuizOpen, setIsQuizOpen] = useState(false);
+  const [quizType, setQuizType] = useState<"lesson" | "final">("lesson");
+  const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [userAnswers, setUserAnswers] = useState<string[]>([]);
+  const [quizStartTime, setQuizStartTime] = useState<number>(0);
+  const [timeLeft, setTimeLeft] = useState(20);
+  const [quizResults, setQuizResults] = useState<QuizResult | null>(null);
+  const [isSubmittingQuiz, setIsSubmittingQuiz] = useState(false);
+
   const { setContext, toggleSidebar, isSidebarOpen, theme } = useAssistant();
 
   useEffect(() => {
@@ -74,7 +114,7 @@ export default function ClassroomPage() {
     } else if (user) {
       fetchMyCourses();
     }
-  }, [courseId, user]);
+  }, [courseId, user, source]);
 
   const fetchMyCourses = async () => {
     if (!user) return;
@@ -117,10 +157,36 @@ export default function ClassroomPage() {
         const progressRes = await fetch(`/api/progress/${user.uid}`);
         if (progressRes.ok) {
           const allProgress = await progressRes.json();
-          const currentProgress = allProgress.find((p: any) => 
+          let currentProgress = allProgress.find((p: any) => 
             p.courseId?._id === courseId && (p.enrollmentSource || 'personal') === source
           );
-          setUserProgress(currentProgress);
+
+          // If not found with current source, but user is enrolled in this course with another source
+          if (!currentProgress) {
+            const anyProgress = allProgress.find((p: any) => p.courseId?._id === courseId);
+            if (anyProgress) {
+              console.log(`[Classroom] Enrollment found with different source: ${anyProgress.enrollmentSource}. Redirecting...`);
+              navigate(`/classroom/${courseId}?source=${anyProgress.enrollmentSource || 'personal'}`, { replace: true });
+              return; // The effect will re-run with the new source
+            }
+          }
+          
+          // If still not found, and it's a personal course, auto-enroll
+          if (!currentProgress && source === 'personal') {
+            console.log(`[Classroom] No enrollment found for personal course. Enrolling...`);
+            const enrollRes = await fetch("/api/enroll", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ userId: user.uid, courseId, enrollmentSource: 'personal' }),
+            });
+            if (enrollRes.ok) {
+              currentProgress = await enrollRes.json();
+              // Refresh my courses list
+              fetchMyCourses();
+            }
+          }
+
+          setUserProgress(currentProgress ? { ...currentProgress, courseId: courseData } : null);
         }
       }
     } catch (err) {
@@ -134,18 +200,279 @@ export default function ClassroomPage() {
   const handleMarkLessonComplete = async () => {
     if (!user || !courseId || !currentLesson) return;
     try {
+      console.log(`[Classroom] Marking lesson ${currentLesson._id} complete for user ${user.uid}, course ${courseId}, source ${source}`);
       const res = await fetch(`/api/progress/${user.uid}/${courseId}/lesson/${currentLesson._id}?enrollmentSource=${source}`, {
         method: 'POST'
       });
       if (res.ok) {
         const updatedProgress = await res.json();
-        // Since the backend doesn't populate courseId in the return, we need to handle it
+        console.log("[Classroom] Lesson completion successful, updated progress:", updatedProgress);
+        // Ensure courseId is populated in the state
         setUserProgress({ ...updatedProgress, courseId: course });
+      } else {
+        const errorData = await res.json();
+        console.error("[Classroom] Lesson completion failed:", errorData);
+        alert(errorData.error || "Failed to mark lesson as complete. Please check your enrollment.");
       }
     } catch (err) {
-      console.error(err);
+      console.error("[Classroom] Lesson completion error:", err);
     }
   };
+
+  const generateQuiz = async (type: "lesson" | "final") => {
+    if (!user || !course || (type === "lesson" && !currentLesson)) return;
+    
+    setIsGeneratingQuiz(true);
+    setQuizType(type);
+    setIsQuizOpen(true);
+    setQuizResults(null);
+    setQuizQuestions([]);
+    setCurrentQuestionIndex(0);
+    setUserAnswers([]);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const model = ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{
+          role: "user",
+          parts: [{
+            text: type === "lesson" 
+              ? `Generate a 10-question multiple-choice quiz based on the following lesson summary: "${currentLesson?.summary}". 
+                 Each question must have 4 options, one correct answer, and a brief explanation. 
+                 Return the response as a JSON array of objects with the following structure: 
+                 { "question": "string", "options": ["string", "string", "string", "string"], "correctAnswer": "string", "explanation": "string" }`
+              : `Generate a 50-question multiple-choice final exam for the course: "${course.title}". 
+                 The exam should cover various topics related to the course. 
+                 Each question must have 4 options, one correct answer, and a brief explanation. 
+                 Return the response as a JSON array of objects with the following structure: 
+                 { "question": "string", "options": ["string", "string", "string", "string"], "correctAnswer": "string", "explanation": "string" }`
+          }]
+        }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                question: { type: Type.STRING },
+                options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                correctAnswer: { type: Type.STRING },
+                explanation: { type: Type.STRING }
+              },
+              required: ["question", "options", "correctAnswer", "explanation"]
+            }
+          }
+        }
+      });
+
+      const result = await model;
+      if (!result.text) {
+        throw new Error("Empty response from AI model");
+      }
+      const questions = JSON.parse(result.text);
+      setQuizQuestions(questions);
+      setQuizStartTime(Date.now());
+      setTimeLeft(20);
+    } catch (err: any) {
+      console.error("Quiz generation error:", err);
+      let errorMessage = "Failed to generate quiz. Please try again.";
+      
+      if (err.message?.includes("404") || err.message?.includes("NOT_FOUND")) {
+        errorMessage = "AI Model not found. Please check configuration.";
+      } else if (err.message?.includes("API_KEY")) {
+        errorMessage = "Invalid API Key. Please check your settings.";
+      } else if (err instanceof SyntaxError) {
+        errorMessage = "Quiz generation failed due to invalid AI response format.";
+      }
+      
+      alert(errorMessage);
+      setIsQuizOpen(false);
+    } finally {
+      setIsGeneratingQuiz(false);
+    }
+  };
+
+  const handleViewResult = (type: "lesson" | "final") => {
+    if (!userProgress) return;
+    
+    let storedResult = null;
+    if (type === "lesson") {
+      const quiz = userProgress.lessonQuizzes?.find((q: any) => q.lessonId === currentLesson?._id);
+      if (quiz) {
+        storedResult = {
+          score: quiz.score,
+          totalQuestions: quiz.totalQuestions,
+          timeTaken: quiz.timeTaken,
+          attempts: quiz.attempts,
+          answers: quiz.answers,
+          feedback: quiz.feedback
+        };
+      }
+    } else {
+      const test = userProgress.finalTest;
+      if (test && test.completed) {
+        storedResult = {
+          score: test.score,
+          totalQuestions: test.totalQuestions,
+          timeTaken: test.timeTaken,
+          attempts: test.attempts,
+          answers: test.answers,
+          feedback: test.feedback
+        };
+      }
+    }
+
+    if (storedResult) {
+      setQuizType(type);
+      setQuizResults(storedResult);
+      setIsQuizOpen(true);
+      setIsGeneratingQuiz(false);
+    }
+  };
+  const handleAnswerSelect = (answer: string) => {
+    const newAnswers = [...userAnswers];
+    newAnswers[currentQuestionIndex] = answer;
+    setUserAnswers(newAnswers);
+    
+    if (currentQuestionIndex < quizQuestions.length - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+      setTimeLeft(20);
+    } else {
+      submitQuiz(newAnswers);
+    }
+  };
+
+  const submitQuiz = async (finalAnswers: string[]) => {
+    if (!user || !courseId) return;
+    setIsSubmittingQuiz(true);
+    
+    const timeTaken = Math.round((Date.now() - quizStartTime) / 1000);
+    const results = quizQuestions.map((q, i) => ({
+      question: q.question,
+      userAnswer: finalAnswers[i] || "Skipped",
+      correctAnswer: q.correctAnswer,
+      isCorrect: finalAnswers[i] === q.correctAnswer,
+      explanation: q.explanation
+    }));
+
+    const score = results.filter(r => r.isCorrect).length;
+
+    try {
+      // Generate AI Feedback
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const feedbackModel = ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{
+          role: "user",
+          parts: [{
+            text: `Analyze the following quiz results and provide feedback on strengths, weaknesses, and suggestions for improvement. 
+                   Score: ${score}/${quizQuestions.length}. 
+                   Results: ${JSON.stringify(results.map(r => ({ q: r.question, correct: r.isCorrect })))}
+                   Return as JSON: { "strengths": ["string"], "weaknesses": ["string"], "suggestions": ["string"] }`
+          }]
+        }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
+              weaknesses: { type: Type.ARRAY, items: { type: Type.STRING } },
+              suggestions: { type: Type.ARRAY, items: { type: Type.STRING } }
+            },
+            required: ["strengths", "weaknesses", "suggestions"]
+          }
+        }
+      });
+
+      const feedbackResult = await feedbackModel;
+      const feedback = JSON.parse(feedbackResult.text);
+
+      const quizResult: QuizResult = {
+        score,
+        totalQuestions: quizQuestions.length,
+        timeTaken,
+        answers: results,
+        feedback
+      };
+
+      setQuizResults(quizResult);
+
+      // Save to backend
+      const endpoint = quizType === "lesson" 
+        ? `/api/progress/${user.uid}/${courseId}/quiz/${currentLesson?._id}`
+        : `/api/progress/${user.uid}/${courseId}/final-test`;
+
+      console.log(`Submitting quiz to ${endpoint} with source: ${source}`);
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          score,
+          totalQuestions: quizQuestions.length,
+          timeTaken,
+          answers: results,
+          feedback,
+          enrollmentSource: source
+        })
+      });
+
+      if (res.ok) {
+        const updatedProgress = await res.json();
+        console.log("Quiz submission successful, updated progress:", updatedProgress);
+        const updatedQuiz = quizType === "lesson" 
+          ? updatedProgress.lessonQuizzes?.find((q: any) => q.lessonId === currentLesson?._id)
+          : updatedProgress.finalTest;
+
+        const finalResult: QuizResult = {
+          ...quizResult,
+          attempts: updatedQuiz?.attempts
+        };
+        
+        setQuizResults(finalResult);
+        setUserProgress({ ...updatedProgress, courseId: course });
+      } else {
+        const errorData = await res.json();
+        console.error("Quiz submission failed:", errorData);
+        alert(errorData.error || "Failed to save quiz result. Please check your enrollment.");
+      }
+
+    } catch (err) {
+      console.error("Quiz submission error:", err);
+    } finally {
+      setIsSubmittingQuiz(false);
+    }
+  };
+
+  useEffect(() => {
+    let timer: any;
+    if (isQuizOpen && !isGeneratingQuiz && !quizResults && timeLeft > 0) {
+      timer = setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev <= 1) {
+            // Auto skip to next question
+            if (currentQuestionIndex < quizQuestions.length - 1) {
+              const newAnswers = [...userAnswers];
+              newAnswers[currentQuestionIndex] = "Skipped";
+              setUserAnswers(newAnswers);
+              setCurrentQuestionIndex(prevIdx => prevIdx + 1);
+              return 20;
+            } else {
+              const newAnswers = [...userAnswers];
+              newAnswers[currentQuestionIndex] = "Skipped";
+              setUserAnswers(newAnswers);
+              submitQuiz(newAnswers);
+              return 0;
+            }
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [isQuizOpen, isGeneratingQuiz, quizResults, timeLeft, currentQuestionIndex, quizQuestions.length, userAnswers]);
 
   const handleMarkCourseComplete = async () => {
     if (!user || !courseId) return;
@@ -156,6 +483,7 @@ export default function ClassroomPage() {
     if (!user || !courseId) return;
     setIsSubmittingRating(true);
     try {
+      console.log(`[Classroom] Finalizing course ${courseId} for user ${user.uid}, source ${source}`);
       const res = await fetch(`/api/progress/${user.uid}/${courseId}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -163,11 +491,16 @@ export default function ClassroomPage() {
       });
       if (res.ok) {
         const updatedProgress = await res.json();
+        console.log("[Classroom] Course completion successful, updated progress:", updatedProgress);
         setUserProgress({ ...updatedProgress, courseId: course });
         setIsRatingModalOpen(false);
+      } else {
+        const errorData = await res.json();
+        console.error("[Classroom] Course completion failed:", errorData);
+        alert(errorData.error || "Failed to complete course. Please check your enrollment.");
       }
     } catch (err) {
-      console.error(err);
+      console.error("[Classroom] Course completion error:", err);
     } finally {
       setIsSubmittingRating(false);
     }
@@ -238,7 +571,7 @@ export default function ClassroomPage() {
                 <motion.div
                   key={progress._id}
                   whileHover={{ y: -5 }}
-                  onClick={() => navigate(`/classroom/${progress.courseId?._id}`)}
+                  onClick={() => navigate(`/classroom/${progress.courseId?._id}?source=${progress.enrollmentSource || 'personal'}`)}
                   className="bg-theme-card border border-theme-border rounded-[32px] overflow-hidden cursor-pointer hover:border-theme-accent/30 transition-all duration-500 group flex flex-col"
                 >
                   <div className="aspect-video relative overflow-hidden">
@@ -262,12 +595,12 @@ export default function ClassroomPage() {
                     <div className="space-y-3 pt-4 border-t border-theme-border/5">
                       <div className="flex justify-between text-[10px] font-black uppercase tracking-widest">
                         <span className="text-theme-text-muted">Progress</span>
-                        <span className="text-theme-accent">{Math.round(((progress.completedLessons?.length || 0) / 10) * 100)}%</span>
+                        <span className="text-theme-accent">{Math.round(((progress.completedLessons?.length || 0) / (progress.totalLessons || 1)) * 100)}%</span>
                       </div>
                       <div className="h-1.5 bg-theme-text/5 rounded-full overflow-hidden">
                         <motion.div 
                           initial={{ width: 0 }}
-                          animate={{ width: `${((progress.completedLessons?.length || 0) / 10) * 100}%` }}
+                          animate={{ width: `${((progress.completedLessons?.length || 0) / (progress.totalLessons || 1)) * 100}%` }}
                           className="h-full bg-theme-accent rounded-full shadow-[0_0_10px_rgba(16,185,129,0.5)]"
                         />
                       </div>
@@ -415,36 +748,67 @@ export default function ClassroomPage() {
           ))}
         </div>
 
-        <div className="p-4 border-t border-theme-border space-y-4">
-          <div className="bg-theme-text/5 rounded-2xl p-4 space-y-3">
-            <div className="flex justify-between text-xs">
-              <span className="text-theme-text-muted">Your Progress</span>
-              <span className="text-theme-accent font-bold">
-                {lessons.length > 0 ? Math.round(((userProgress?.completedLessons?.length || 0) / lessons.length) * 100) : 0}%
-              </span>
+          <div className="p-4 border-t border-theme-border space-y-4">
+            <div className="bg-theme-text/5 rounded-2xl p-4 space-y-3">
+              <div className="flex justify-between text-xs">
+                <span className="text-theme-text-muted">Your Progress</span>
+                <span className="text-theme-accent font-bold">
+                  {lessons.length > 0 ? Math.round(((userProgress?.completedLessons?.length || 0) / lessons.length) * 100) : 0}%
+                </span>
+              </div>
+              <div className="h-1.5 bg-theme-text/10 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-theme-accent rounded-full transition-all duration-500" 
+                  style={{ width: `${lessons.length > 0 ? ((userProgress?.completedLessons?.length || 0) / lessons.length) * 100 : 0}%` }}
+                />
+              </div>
             </div>
-            <div className="h-1.5 bg-theme-text/10 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-theme-accent rounded-full transition-all duration-500" 
-                style={{ width: `${lessons.length > 0 ? ((userProgress?.completedLessons?.length || 0) / lessons.length) * 100 : 0}%` }}
-              />
-            </div>
-          </div>
-          
-          <button
-            onClick={handleMarkCourseComplete}
-            disabled={userProgress?.isCompleted}
-            className={cn(
-              "w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all",
-              userProgress?.isCompleted
-                ? "bg-emerald-500/10 text-emerald-500 cursor-default"
-                : "bg-theme-accent text-white hover:opacity-90"
+            
+            {lessons.length > 0 && userProgress?.completedLessons?.length === lessons.length ? (
+              <div className="space-y-2">
+                {userProgress?.finalTest?.completed && (
+                  <button 
+                    onClick={() => handleViewResult("final")}
+                    className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold bg-theme-text/5 text-theme-text hover:bg-theme-text/10 transition-all border border-theme-border"
+                  >
+                    <FileText size={14} />
+                    View Final Test Result
+                  </button>
+                )}
+                <button
+                  onClick={() => generateQuiz("final")}
+                  disabled={userProgress?.isCompleted || userProgress?.finalTest?.completed}
+                  className={cn(
+                    "w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all",
+                    userProgress?.isCompleted || userProgress?.finalTest?.completed
+                      ? "bg-emerald-500/10 text-emerald-500 cursor-default"
+                      : "bg-theme-accent text-white hover:opacity-90"
+                  )}
+                >
+                  <Trophy size={18} />
+                  {userProgress?.isCompleted || userProgress?.finalTest?.completed ? "Course Completed" : "Take Final Test"}
+                </button>
+              </div>
+            ) : (
+              <button
+                disabled
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold bg-theme-text/5 text-theme-text/20 cursor-not-allowed"
+              >
+                <CheckCircle2 size={18} />
+                Complete all lessons to finish
+              </button>
             )}
-          >
-            <CheckCircle2 size={18} />
-            {userProgress?.isCompleted ? "Course Completed" : "Mark Course as Completed"}
-          </button>
-        </div>
+
+            {userProgress?.finalTest?.completed && !userProgress?.isCompleted && (
+              <button
+                onClick={() => setIsRatingModalOpen(true)}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold bg-emerald-500 text-white hover:bg-emerald-600 transition-all"
+              >
+                <CheckCircle2 size={18} />
+                Finalize Course Completion
+              </button>
+            )}
+          </div>
       </motion.div>
 
       {/* Center Canvas: Workspace */}
@@ -471,14 +835,37 @@ export default function ClassroomPage() {
           </div>
 
           <div className="flex items-center gap-2 lg:gap-4">
+            {currentLesson && (
+              <div className="flex items-center gap-2">
+                {userProgress?.lessonQuizzes?.find((q: any) => q.lessonId === currentLesson._id)?.completed ? (
+                  <button 
+                    onClick={() => handleViewResult("lesson")}
+                    className="flex items-center gap-2 px-3 lg:px-4 py-2 bg-theme-text/5 hover:bg-theme-text/10 rounded-xl text-sm font-bold transition-all text-theme-text"
+                  >
+                    <FileText size={16} />
+                    <span className="hidden sm:inline">View Result</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => generateQuiz("lesson")}
+                    className="flex items-center gap-2 px-3 lg:px-4 py-2 bg-theme-accent/10 text-theme-accent hover:bg-theme-accent/20 rounded-xl text-sm font-bold transition-all"
+                  >
+                    <BrainCircuit size={16} />
+                    <span className="hidden sm:inline">Take Lesson Quiz</span>
+                  </button>
+                )}
+              </div>
+            )}
             <button
               onClick={handleMarkLessonComplete}
-              disabled={userProgress?.completedLessons?.includes(currentLesson?._id)}
+              disabled={userProgress?.completedLessons?.includes(currentLesson?._id) || !userProgress?.lessonQuizzes?.find((q: any) => q.lessonId === currentLesson?._id)?.completed}
               className={cn(
                 "flex items-center gap-2 px-3 lg:px-4 py-2 rounded-xl text-sm font-bold transition-all",
                 userProgress?.completedLessons?.includes(currentLesson?._id)
                   ? "bg-emerald-500/10 text-emerald-500 cursor-default"
-                  : "bg-theme-text/5 text-theme-text hover:bg-theme-text/10"
+                  : !userProgress?.lessonQuizzes?.find((q: any) => q.lessonId === currentLesson?._id)?.completed
+                    ? "bg-theme-text/5 text-theme-text/20 cursor-not-allowed"
+                    : "bg-theme-text/5 text-theme-text hover:bg-theme-text/10"
               )}
             >
               <CheckCircle2 size={16} />
@@ -628,7 +1015,284 @@ export default function ClassroomPage() {
         </div>
       </div>
 
-      {/* Rating Modal */}
+      {/* Quiz Modal */}
+      <AnimatePresence>
+        {isQuizOpen && (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 sm:p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-6xl bg-theme-card border border-theme-border rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {isGeneratingQuiz || isSubmittingQuiz ? (
+                <div className="flex-1 flex flex-col items-center justify-center p-12 space-y-6">
+                  <div className="relative">
+                    <div className="w-20 h-20 border-4 border-theme-accent/20 border-t-theme-accent rounded-full animate-spin" />
+                    {isSubmittingQuiz ? (
+                      <Sparkles className="absolute inset-0 m-auto text-theme-accent animate-pulse" size={32} />
+                    ) : (
+                      <BrainCircuit className="absolute inset-0 m-auto text-theme-accent animate-pulse" size={32} />
+                    )}
+                  </div>
+                  <div className="text-center space-y-2">
+                    <h3 className="text-2xl font-bold">
+                      {isSubmittingQuiz ? "Generating Your Results" : `Generating Your ${quizType === "lesson" ? "Lesson Quiz" : "Final Exam"}`}
+                    </h3>
+                    <p className="text-theme-text-muted">
+                      {isSubmittingQuiz ? "Nova is analyzing your performance and providing personalized feedback..." : "Nova is analyzing the content to create a personalized assessment..."}
+                    </p>
+                  </div>
+                </div>
+              ) : quizResults ? (
+                <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                  {/* Results Header */}
+                  <div className="flex flex-col md:flex-row items-center justify-between gap-8 p-8 bg-theme-text/5 rounded-[32px]">
+                    <div className="flex items-center gap-6">
+                      <div className="w-24 h-24 rounded-full border-8 border-theme-accent flex items-center justify-center bg-theme-accent/10">
+                        <span className="text-3xl font-black">{Math.round((quizResults.score / quizResults.totalQuestions) * 100)}%</span>
+                      </div>
+                      <div className="space-y-1">
+                        <h3 className="text-2xl font-bold">Assessment Complete!</h3>
+                        <div className="flex items-center gap-3 text-theme-text-muted">
+                          <p>
+                            You scored {quizResults.score} out of {quizResults.totalQuestions} in {quizResults.timeTaken}s
+                          </p>
+                          {quizResults.attempts && (
+                            <>
+                              <div className="w-1 h-1 rounded-full bg-theme-text/20" />
+                              <p className="flex items-center gap-1">
+                                <RotateCcw size={12} />
+                                Attempt {quizResults.attempts}
+                              </p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-4">
+                      <button 
+                        onClick={() => generateQuiz(quizType)}
+                        className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold bg-theme-text/5 hover:bg-theme-text/10 transition-all"
+                      >
+                        <RotateCcw size={18} />
+                        Retake Test
+                      </button>
+                      <button 
+                        onClick={async () => {
+                          if (quizType === "final") {
+                            await handleMarkCourseComplete();
+                          }
+                          setIsQuizOpen(false);
+                        }}
+                        className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold bg-theme-accent text-white hover:opacity-90 transition-all shadow-lg shadow-theme-accent/20"
+                      >
+                        <Check size={18} />
+                        Complete Test
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* AI Feedback */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="p-6 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl space-y-4">
+                      <div className="flex items-center gap-2 text-emerald-500">
+                        <Trophy size={20} />
+                        <h4 className="font-bold uppercase tracking-widest text-xs">Strengths</h4>
+                      </div>
+                      <ul className="space-y-2">
+                        {quizResults.feedback.strengths.map((s, i) => (
+                          <li key={i} className="text-sm text-theme-text/60 flex gap-2">
+                            <span className="text-emerald-500">•</span> {s}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="p-6 bg-amber-500/5 border border-amber-500/10 rounded-2xl space-y-4">
+                      <div className="flex items-center gap-2 text-amber-500">
+                        <AlertCircle size={20} />
+                        <h4 className="font-bold uppercase tracking-widest text-xs">Weaknesses</h4>
+                      </div>
+                      <ul className="space-y-2">
+                        {quizResults.feedback.weaknesses.map((w, i) => (
+                          <li key={i} className="text-sm text-theme-text/60 flex gap-2">
+                            <span className="text-amber-500">•</span> {w}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="p-6 bg-blue-500/5 border border-blue-500/10 rounded-2xl space-y-4">
+                      <div className="flex items-center gap-2 text-blue-400">
+                        <Sparkles size={20} />
+                        <h4 className="font-bold uppercase tracking-widest text-xs">Suggestions</h4>
+                      </div>
+                      <ul className="space-y-2">
+                        {quizResults.feedback.suggestions.map((s, i) => (
+                          <li key={i} className="text-sm text-theme-text/60 flex gap-2">
+                            <span className="text-blue-400">•</span> {s}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  {/* Detailed Answers */}
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-lg font-bold">Detailed Review</h4>
+                      <div className="flex gap-4 text-[10px] font-black uppercase tracking-widest">
+                        <div className="flex items-center gap-1.5 text-emerald-500">
+                          <div className="w-2 h-2 rounded-full bg-current" />
+                          Correct
+                        </div>
+                        <div className="flex items-center gap-1.5 text-red-500">
+                          <div className="w-2 h-2 rounded-full bg-current" />
+                          Incorrect
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-6">
+                      {quizResults.answers.map((answer, i) => (
+                        <div key={i} className={cn(
+                          "p-8 rounded-[24px] border transition-all shadow-sm",
+                          answer.isCorrect ? "bg-emerald-500/5 border-emerald-500/10" : "bg-red-500/5 border-red-500/10"
+                        )}>
+                          <div className="flex items-start justify-between gap-6 mb-6">
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-black uppercase tracking-widest text-theme-text/20">Question {i+1}</p>
+                              <p className="text-lg font-bold text-theme-text leading-tight">{answer.question}</p>
+                            </div>
+                            {answer.isCorrect ? (
+                              <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500 shrink-0">
+                                <CheckCircle2 size={24} />
+                              </div>
+                            ) : (
+                              <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 shrink-0">
+                                <AlertCircle size={24} />
+                              </div>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 bg-theme-text/5 rounded-2xl mb-6">
+                            <div className="space-y-2">
+                              <p className="text-theme-text-muted uppercase tracking-widest text-[10px] font-black">Your Answer</p>
+                              <p className={cn("font-bold text-base", answer.isCorrect ? "text-emerald-500" : "text-red-500")}>{answer.userAnswer}</p>
+                            </div>
+                            <div className="space-y-2">
+                              <p className="text-theme-text-muted uppercase tracking-widest text-[10px] font-black">Correct Answer</p>
+                              <p className="text-emerald-500 font-bold text-base">{answer.correctAnswer}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-4 p-4 bg-theme-text/5 rounded-xl">
+                            <div className="w-8 h-8 rounded-lg bg-theme-text/5 flex items-center justify-center text-theme-text/40 shrink-0">
+                              <Info size={16} />
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Explanation</p>
+                              <p className="text-sm text-theme-text/60 italic leading-relaxed">{answer.explanation}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Quiz Header */}
+                  <div className="p-6 border-b border-theme-border flex items-center justify-between bg-theme-text/5">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-theme-accent/10 flex items-center justify-center text-theme-accent">
+                        <BrainCircuit size={20} />
+                      </div>
+                      <div>
+                        <h3 className="font-bold">{quizType === "lesson" ? "Lesson Quiz" : "Final Course Exam"}</h3>
+                        <p className="text-[10px] text-theme-text-muted uppercase tracking-widest font-black">
+                          Question {currentQuestionIndex + 1} of {quizQuestions.length}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-6">
+                      <div className="flex items-center gap-2 px-4 py-2 bg-theme-card rounded-xl border border-theme-border">
+                        <Timer size={16} className={cn(timeLeft < 5 ? "text-red-500 animate-pulse" : "text-theme-text-muted")} />
+                        <span className={cn("font-mono font-bold", timeLeft < 5 ? "text-red-500" : "text-theme-text")}>
+                          00:{timeLeft < 10 ? `0${timeLeft}` : timeLeft}
+                        </span>
+                      </div>
+                      <button 
+                        onClick={() => setIsQuizOpen(false)}
+                        className="p-2 hover:bg-theme-text/5 rounded-lg text-theme-text-muted hover:text-theme-text transition-colors"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div className="h-1 bg-theme-text/5">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${((currentQuestionIndex + 1) / quizQuestions.length) * 100}%` }}
+                      className="h-full bg-theme-accent"
+                    />
+                  </div>
+
+                  {/* Question Content */}
+                  <div className="flex-1 overflow-y-auto p-8 lg:p-12">
+                    <div className="max-w-2xl mx-auto space-y-12">
+                      <motion.div
+                        key={currentQuestionIndex}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="space-y-8"
+                      >
+                        <h2 className="text-2xl lg:text-3xl font-bold text-center leading-tight">
+                          {quizQuestions[currentQuestionIndex]?.question}
+                        </h2>
+
+                        <div className="grid grid-cols-1 gap-4">
+                          {quizQuestions[currentQuestionIndex]?.options.map((option, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => handleAnswerSelect(option)}
+                              className="group relative flex items-center p-6 bg-theme-text/5 border border-theme-border rounded-2xl hover:border-theme-accent hover:bg-theme-accent/5 transition-all text-left"
+                            >
+                              <div className="w-8 h-8 rounded-lg bg-theme-card border border-theme-border flex items-center justify-center text-xs font-bold group-hover:bg-theme-accent group-hover:text-white group-hover:border-theme-accent transition-all mr-4">
+                                {String.fromCharCode(65 + idx)}
+                              </div>
+                              <span className="text-lg font-medium">{option}</span>
+                              <div className="absolute right-6 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <ArrowRight size={20} className="text-theme-accent" />
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </motion.div>
+                    </div>
+                  </div>
+
+                  {/* Quiz Footer */}
+                  <div className="p-6 border-t border-theme-border flex items-center justify-between bg-theme-text/5">
+                    <p className="text-xs text-theme-text-muted flex items-center gap-2">
+                      <AlertCircle size={14} />
+                      No backward navigation allowed. Skipping a question counts as incorrect.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-theme-text/20">Powered by Nova AI</span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {isRatingModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">

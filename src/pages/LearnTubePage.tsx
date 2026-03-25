@@ -277,14 +277,16 @@ export default function LearnTubePage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
-          {Array.isArray(courses) && courses.map((course, index) => (
-            <motion.div
-              key={course._id}
-              ref={index === (Array.isArray(courses) ? courses.length : 0) - 1 ? lastCourseElementRef : null}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="group bg-theme-card border border-theme-border rounded-[32px] overflow-hidden hover:border-theme-accent/30 transition-all duration-500 hover:shadow-2xl hover:shadow-theme-accent/10 flex flex-col"
-            >
+          {Array.isArray(courses) && courses.map((course, index) => {
+            if (!course) return null;
+            return (
+              <motion.div
+                key={course._id}
+                ref={index === (Array.isArray(courses) ? courses.length : 0) - 1 ? lastCourseElementRef : null}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="group bg-theme-card border border-theme-border rounded-[32px] overflow-hidden hover:border-theme-accent/30 transition-all duration-500 hover:shadow-2xl hover:shadow-theme-accent/10 flex flex-col"
+              >
               <div className="aspect-video relative overflow-hidden">
                 <img 
                   src={course.thumbnail} 
@@ -378,8 +380,9 @@ export default function LearnTubePage() {
                 </div>
               </div>
             </motion.div>
-          ))}
-        </div>
+          );
+        })}
+      </div>
       )}
 
       {loadingMore && (
