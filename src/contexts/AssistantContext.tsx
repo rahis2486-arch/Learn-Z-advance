@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import Fuse from 'fuse.js';
 import { useAuth } from './AuthContext';
 import { 
   generateEmbedding, 
@@ -44,6 +45,13 @@ import {
   enrollCourse
 } from "../services/geminiService";
 
+interface Course {
+  id: string;
+  title: string;
+  description?: string;
+  thumbnail?: string;
+}
+
 interface AssistantContextType {
   isLive: boolean;
   isCameraOn: boolean;
@@ -62,6 +70,7 @@ interface AssistantContextType {
   messages: ChatMessage[];
   lastAction: { type: string; payload: any } | null;
   courseId: string | null;
+  lessonId: string | null;
   context: any;
   mathContext: any;
   location: string;
@@ -113,20 +122,66 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [courseId, setCourseId] = useState<string | null>(null);
+  const [lessonId, setLessonId] = useState<string | null>(null);
   const [context, setContext] = useState<any>(null);
   const [mathContext, setMathContext] = useState<any>(null);
   const [location, setLocation] = useState<string>("/");
+  const reactLocation = useLocation();
 
-  // Extract courseId from location
+  // Update location state on every navigation
   useEffect(() => {
-    const pathParts = window.location.pathname.split('/');
+    setLocation(reactLocation.pathname);
+  }, [reactLocation.pathname]);
+
+  // Extract courseId and lessonId from location
+  useEffect(() => {
+    const pathParts = reactLocation.pathname.split('/');
     const classroomIdx = pathParts.indexOf('classroom');
     if (classroomIdx !== -1 && pathParts[classroomIdx + 1]) {
       setCourseId(pathParts[classroomIdx + 1]);
+      
+      // Extract lessonId from search params
+      const params = new URLSearchParams(reactLocation.search);
+      setLessonId(params.get('lesson'));
     } else {
       setCourseId(null);
+      setLessonId(null);
     }
-  }, [window.location.pathname]);
+  }, [reactLocation.pathname, reactLocation.search]);
+
+  const resolveCourseByName = async (name: string) => {
+    try {
+      // 1. Get enrolled courses
+      const stats = await getDashboardStats(user?.uid || "");
+      const enrolledCourses = (stats?.enrolledCourses || []) as Course[];
+      
+      // Fuzzy search in enrolled
+      const fuseEnrolled = new Fuse(enrolledCourses, { keys: ["title"], threshold: 0.4 });
+      const enrolledMatch = fuseEnrolled.search(name);
+      
+      if (enrolledMatch.length > 0) {
+        return { course: enrolledMatch[0].item, source: 'enrolled' };
+      }
+      
+      // 2. Search platform courses
+      const platformCourses = (await searchCourses(name)) as Course[];
+      const fusePlatform = new Fuse(platformCourses, { keys: ["title"], threshold: 0.4 });
+      const platformMatch = fusePlatform.search(name);
+      
+      if (platformMatch.length > 0) {
+        const course = platformMatch[0].item;
+        // Check enrollment
+        const enrolled = await checkEnrollment(user?.uid || "", course.id);
+        if (!enrolled) {
+          await enrollCourse(user?.uid || "", course.id, 'nova-auto');
+        }
+        return { course, source: 'platform' };
+      }
+    } catch (err) {
+      console.error("Course resolution error:", err);
+    }
+    return null;
+  };
 
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -648,180 +703,223 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               setIsThinking(true);
               triggerMemoryEffect();
               for (const call of message.toolCall.functionCalls) {
-                if (call.name === "store_memory") {
-                  const { content, type = 'short-term' } = call.args as any;
-                  setIsProcessing(true);
-                  if (type === 'long-term') sessionLongTermFactsRef.current.push(content);
-                  else sessionRetrievalFactsRef.current.push(content);
-                  const embedding = await generateEmbedding(content);
-                  if (embedding && user?.uid) await storeMemory(content, embedding, type, user.uid, courseId || undefined);
-                  setIsProcessing(false);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "store_memory", id: call.id, response: { output: `Fact stored.` } }] });
-                  });
-                } else if (call.name === "search_memory") {
-                  const { query } = call.args as any;
-                  setIsProcessing(true);
-                  const embedding = await generateEmbedding(query);
-                  
-                  // Prioritized search: Short-term first
-                  let results = (embedding && user?.uid) ? await searchMemory(embedding, 'short-term', user.uid, courseId || undefined) : [];
-                  let source = 'short-term';
-                  
-                  if (results.length === 0 && embedding && user?.uid) {
-                    // If not found in short-term, search long-term
-                    results = await searchMemory(embedding, 'long-term', user.uid, courseId || undefined);
-                    source = 'long-term';
+                try {
+                  if (call.name === "store_memory") {
+                    const { content, type = 'short-term' } = call.args as any;
+                    setIsProcessing(true);
+                    if (type === 'long-term') sessionLongTermFactsRef.current.push(content);
+                    else sessionRetrievalFactsRef.current.push(content);
+                    const embedding = await generateEmbedding(content);
+                    if (embedding && user?.uid) await storeMemory(content, embedding, type, user.uid, courseId || undefined);
+                    setIsProcessing(false);
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "store_memory", id: call.id, response: { output: `Fact stored.` } }] });
+                    });
+                  } else if (call.name === "search_memory") {
+                    const { query } = call.args as any;
+                    setIsProcessing(true);
+                    const embedding = await generateEmbedding(query);
+                    
+                    // Prioritized search: Short-term first
+                    let results = (embedding && user?.uid) ? await searchMemory(embedding, 'short-term', user.uid, courseId || undefined) : [];
+                    let source = 'short-term';
+                    
+                    if (results.length === 0 && embedding && user?.uid) {
+                      // If not found in short-term, search long-term
+                      results = await searchMemory(embedding, 'long-term', user.uid, courseId || undefined);
+                      source = 'long-term';
+                    }
+                    
+                    setIsProcessing(false);
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ 
+                        functionResponses: [{ 
+                          name: "search_memory", 
+                          id: call.id, 
+                          response: { 
+                            results: results.map(r => r.content),
+                            source,
+                            found: results.length > 0
+                          } 
+                        }] 
+                      });
+                    });
+                  } else if (call.name === "get_dashboard_stats") {
+                    const { userId } = call.args as any;
+                    setIsProcessing(true);
+                    const stats = await getDashboardStats(userId);
+                    setIsProcessing(false);
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ 
+                        functionResponses: [{ 
+                          name: "get_dashboard_stats", 
+                          id: call.id, 
+                          response: { stats } 
+                        }] 
+                      });
+                    });
+                  } else if (call.name === "get_user_progress") {
+                    const { userId } = call.args as any;
+                    setIsProcessing(true);
+                    const progress = await getUserProgress(userId);
+                    setIsProcessing(false);
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ 
+                        functionResponses: [{ 
+                          name: "get_user_progress", 
+                          id: call.id, 
+                          response: { progress } 
+                        }] 
+                      });
+                    });
+                  } else if (call.name === "get_learning_profile") {
+                    const { userId } = call.args as any;
+                    setIsProcessing(true);
+                    const profile = await getLearningProfile(userId);
+                    setIsProcessing(false);
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ 
+                        functionResponses: [{ 
+                          name: "get_learning_profile", 
+                          id: call.id, 
+                          response: { profile } 
+                        }] 
+                      });
+                    });
+                  } else if (call.name === "navigate_to_page") {
+                    const { page, courseId: navCourseId } = call.args as any;
+                    let path = "/";
+                    switch(page) {
+                      case "home": path = "/"; break;
+                      case "classroom": path = navCourseId ? `/classroom/${navCourseId}` : "/classroom"; break;
+                      case "learntube": path = "/learntube"; break;
+                      case "assistant": path = "/assistant"; break;
+                      case "memory": path = "/memory"; break;
+                      case "admin": path = "/admin"; break;
+                      case "math-tutor": path = "/math-tutor"; break;
+                      default: path = "/";
+                    }
+                    
+                    navigate(path);
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "navigate_to_page", id: call.id, response: { output: `Navigated to ${page}.` } }] });
+                    });
+                  } else if (call.name === "open_course") {
+                    const { courseId: inputCourseId } = call.args as any;
+                    let targetId = inputCourseId;
+                    
+                    // Smart resolution if it looks like a name or if we want to be sure
+                    if (inputCourseId && (inputCourseId.length > 5 || !inputCourseId.match(/^[a-z0-9_-]+$/i))) {
+                      const resolved = await resolveCourseByName(inputCourseId);
+                      if (resolved) targetId = resolved.course.id;
+                    }
+                    
+                    if (targetId) {
+                      navigate(`/classroom/${targetId}`);
+                      sessionPromise.then(session => {
+                        if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_course", id: call.id, response: { output: `Opened course ${targetId}.` } }] });
+                      });
+                    } else {
+                      sessionPromise.then(session => {
+                        if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_course", id: call.id, response: { error: `I couldn't find that course.` } }] });
+                      });
+                    }
+                  } else if (call.name === "open_lesson") {
+                    const { courseId: inputCourseId, lessonId } = call.args as any;
+                    let targetId = inputCourseId;
+                    
+                    if (inputCourseId && (inputCourseId.length > 5 || !inputCourseId.match(/^[a-z0-9_-]+$/i))) {
+                      const resolved = await resolveCourseByName(inputCourseId);
+                      if (resolved) targetId = resolved.course.id;
+                    }
+                    
+                    if (targetId) {
+                      navigate(`/classroom/${targetId}?lesson=${lessonId}`);
+                      sessionPromise.then(session => {
+                        if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_lesson", id: call.id, response: { output: `Opened lesson ${lessonId} in course ${targetId}.` } }] });
+                      });
+                    } else {
+                      sessionPromise.then(session => {
+                        if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_lesson", id: call.id, response: { error: `I couldn't find that course.` } }] });
+                      });
+                    }
+                  } else if (call.name === "go_to_next_lesson") {
+                    dispatchAction("NEXT_LESSON", {});
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "go_to_next_lesson", id: call.id, response: { output: `Navigating to next lesson.` } }] });
+                    });
+                  } else if (call.name === "go_to_previous_lesson") {
+                    dispatchAction("PREVIOUS_LESSON", {});
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "go_to_previous_lesson", id: call.id, response: { output: `Navigating to previous lesson.` } }] });
+                    });
+                  } else if (call.name === "search_courses") {
+                    const { query } = call.args as any;
+                    setIsProcessing(true);
+                    // UI Synchronized Search: Navigate to LearnTube and trigger search
+                    navigate(`/learntube?q=${encodeURIComponent(query)}`);
+                    const courses = await searchCourses(query);
+                    setIsProcessing(false);
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "search_courses", id: call.id, response: { courses } }] });
+                    });
+                  } else if (call.name === "recommend_courses") {
+                    const { userId } = call.args as any;
+                    setIsProcessing(true);
+                    const recommendations = await recommendCourses(userId);
+                    setIsProcessing(false);
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "recommend_courses", id: call.id, response: { recommendations } }] });
+                    });
+                  } else if (call.name === "check_enrollment") {
+                    const { userId, courseId } = call.args as any;
+                    setIsProcessing(true);
+                    const enrolled = await checkEnrollment(userId, courseId);
+                    setIsProcessing(false);
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "check_enrollment", id: call.id, response: { enrolled } }] });
+                    });
+                  } else if (call.name === "enroll_course") {
+                    const { userId, courseId, source } = call.args as any;
+                    setIsProcessing(true);
+                    const enrollment = await enrollCourse(userId, courseId, source);
+                    setIsProcessing(false);
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "enroll_course", id: call.id, response: { enrollment } }] });
+                    });
+                  } else if (call.name === "play_video") {
+                    dispatchAction("PLAY_VIDEO", {});
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "play_video", id: call.id, response: { output: `Video started. DO NOT speak or keep your response extremely silent/minimal.` } }] });
+                    });
+                  } else if (call.name === "pause_video") {
+                    dispatchAction("PAUSE_VIDEO", {});
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "pause_video", id: call.id, response: { output: `Video paused.` } }] });
+                    });
+                  } else if (call.name === "seek_video") {
+                    const { seconds } = call.args as any;
+                    dispatchAction("SEEK_VIDEO", { seconds });
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "seek_video", id: call.id, response: { output: `Video seeked to ${seconds}s.` } }] });
+                    });
+                  } else if (call.name === "get_video_timestamp") {
+                    const timestamp = context?.videoTimestamp || 0;
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "get_video_timestamp", id: call.id, response: { timestamp } }] });
+                    });
                   }
-                  
+                } catch (err) {
+                  console.error(`Nova Tool Execution Error (${call.name}):`, err);
                   setIsProcessing(false);
                   sessionPromise.then(session => {
                     if (session) (session as any).sendToolResponse({ 
                       functionResponses: [{ 
-                        name: "search_memory", 
+                        name: call.name, 
                         id: call.id, 
-                        response: { 
-                          results: results.map(r => r.content),
-                          source,
-                          found: results.length > 0
-                        } 
+                        response: { error: "Something went wrong, please try again." } 
                       }] 
                     });
-                  });
-                } else if (call.name === "get_dashboard_stats") {
-                  const { userId } = call.args as any;
-                  setIsProcessing(true);
-                  const stats = await getDashboardStats(userId);
-                  setIsProcessing(false);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ 
-                      functionResponses: [{ 
-                        name: "get_dashboard_stats", 
-                        id: call.id, 
-                        response: { stats } 
-                      }] 
-                    });
-                  });
-                } else if (call.name === "get_user_progress") {
-                  const { userId } = call.args as any;
-                  setIsProcessing(true);
-                  const progress = await getUserProgress(userId);
-                  setIsProcessing(false);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ 
-                      functionResponses: [{ 
-                        name: "get_user_progress", 
-                        id: call.id, 
-                        response: { progress } 
-                      }] 
-                    });
-                  });
-                } else if (call.name === "get_learning_profile") {
-                  const { userId } = call.args as any;
-                  setIsProcessing(true);
-                  const profile = await getLearningProfile(userId);
-                  setIsProcessing(false);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ 
-                      functionResponses: [{ 
-                        name: "get_learning_profile", 
-                        id: call.id, 
-                        response: { profile } 
-                      }] 
-                    });
-                  });
-                } else if (call.name === "navigate_to_page") {
-                  const { page, courseId: navCourseId } = call.args as any;
-                  let path = "/";
-                  switch(page) {
-                    case "home": path = "/"; break;
-                    case "classroom": path = navCourseId ? `/classroom/${navCourseId}` : "/classroom"; break;
-                    case "learntube": path = "/learntube"; break;
-                    case "assistant": path = "/assistant"; break;
-                    case "memory": path = "/memory"; break;
-                    case "admin": path = "/admin"; break;
-                    case "math-tutor": path = "/math-tutor"; break;
-                    default: path = "/";
-                  }
-                  
-                  navigate(path);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "navigate_to_page", id: call.id, response: { output: `Navigated to ${page}.` } }] });
-                  });
-                } else if (call.name === "open_course") {
-                  const { courseId } = call.args as any;
-                  navigate(`/classroom/${courseId}`);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_course", id: call.id, response: { output: `Opened course ${courseId}.` } }] });
-                  });
-                } else if (call.name === "open_lesson") {
-                  const { courseId, lessonId } = call.args as any;
-                  navigate(`/classroom/${courseId}?lesson=${lessonId}`);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_lesson", id: call.id, response: { output: `Opened lesson ${lessonId} in course ${courseId}.` } }] });
-                  });
-                } else if (call.name === "go_to_next_lesson") {
-                  dispatchAction("NEXT_LESSON", {});
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "go_to_next_lesson", id: call.id, response: { output: `Navigating to next lesson.` } }] });
-                  });
-                } else if (call.name === "go_to_previous_lesson") {
-                  dispatchAction("PREVIOUS_LESSON", {});
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "go_to_previous_lesson", id: call.id, response: { output: `Navigating to previous lesson.` } }] });
-                  });
-                } else if (call.name === "search_courses") {
-                  const { query } = call.args as any;
-                  setIsProcessing(true);
-                  const courses = await searchCourses(query);
-                  setIsProcessing(false);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "search_courses", id: call.id, response: { courses } }] });
-                  });
-                } else if (call.name === "recommend_courses") {
-                  const { userId } = call.args as any;
-                  setIsProcessing(true);
-                  const recommendations = await recommendCourses(userId);
-                  setIsProcessing(false);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "recommend_courses", id: call.id, response: { recommendations } }] });
-                  });
-                } else if (call.name === "check_enrollment") {
-                  const { userId, courseId } = call.args as any;
-                  setIsProcessing(true);
-                  const enrolled = await checkEnrollment(userId, courseId);
-                  setIsProcessing(false);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "check_enrollment", id: call.id, response: { enrolled } }] });
-                  });
-                } else if (call.name === "enroll_course") {
-                  const { userId, courseId, source } = call.args as any;
-                  setIsProcessing(true);
-                  const enrollment = await enrollCourse(userId, courseId, source);
-                  setIsProcessing(false);
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "enroll_course", id: call.id, response: { enrollment } }] });
-                  });
-                } else if (call.name === "play_video") {
-                  dispatchAction("PLAY_VIDEO", {});
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "play_video", id: call.id, response: { output: `Video started. DO NOT speak or keep your response extremely silent/minimal.` } }] });
-                  });
-                } else if (call.name === "pause_video") {
-                  dispatchAction("PAUSE_VIDEO", {});
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "pause_video", id: call.id, response: { output: `Video paused.` } }] });
-                  });
-                } else if (call.name === "seek_video") {
-                  const { seconds } = call.args as any;
-                  dispatchAction("SEEK_VIDEO", { seconds });
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "seek_video", id: call.id, response: { output: `Video seeked to ${seconds}s.` } }] });
-                  });
-                } else if (call.name === "get_video_timestamp") {
-                  const timestamp = context?.videoTimestamp || 0;
-                  sessionPromise.then(session => {
-                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "get_video_timestamp", id: call.id, response: { timestamp } }] });
                   });
                 }
               }
@@ -948,7 +1046,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     <AssistantContext.Provider value={{
       isLive, isCameraOn, isMicOn, isSpeaking, isThinking, isProcessing, isConnecting, isMemoryAction,
       userVolume, aiVolume, longTermSummary, courseSummary, learningProfile, isSidebarOpen, messages, 
-      lastAction, dispatchAction, courseId, context, mathContext, location, theme,
+      lastAction, dispatchAction, courseId, lessonId, context, mathContext, location, theme,
       facingMode, stream, setContext, setMathContext, setLocation, setTheme, toggleSidebar, toggleCamera, switchCamera, toggleMic, startLiveSession, cleanupSession, setSidebarOpen
     }}>
       {children}

@@ -24,6 +24,7 @@
     "face-api.js": "^0.22.2",
     "firebase": "^12.10.0",
     "firebase-admin": "^13.7.0",
+    "fuse.js": "^7.1.0",
     "gsap": "^3.14.2",
     "lucide-react": "^0.546.0",
     "mongoose": "^9.3.0",
