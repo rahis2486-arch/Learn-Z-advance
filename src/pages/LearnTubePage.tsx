@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { motion } from "motion/react";
 import { BookOpen, Plus, Search, Play, Star, Clock, Sparkles, Filter, Tag } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -20,10 +20,11 @@ interface Course {
 
 export default function LearnTubePage() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
   const [enrolledPersonal, setEnrolledPersonal] = useState<string[]>([]);
   const [enrolledInstitution, setEnrolledInstitution] = useState<string[]>([]);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
@@ -46,6 +47,13 @@ export default function LearnTubePage() {
     });
     if (node) observer.current.observe(node);
   }, [loading, loadingMore, hasMore]);
+
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q !== null) {
+      setSearchQuery(q);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     setCourses([]);

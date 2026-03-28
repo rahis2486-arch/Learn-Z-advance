@@ -25,6 +25,8 @@ import {
   recommendCoursesTool,
   checkEnrollmentTool,
   enrollCourseTool,
+  switchToPersonalCoursesTool,
+  switchToInstitutionCoursesTool,
   playVideoTool,
   pauseVideoTool,
   getVideoTimestampTool,
@@ -603,6 +605,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       - Name: ${user?.displayName || "Student"}
       - Email: ${user?.email || "Unknown"}
       - UID: ${user?.uid || "Guest"}
+      - Role: ${user?.role || "user"}
+      - Login Type: ${user?.loginType || "personal"}
 
       USER LOCATION: The student is currently on the "${location}" page.
       ${classroomContext}
@@ -615,6 +619,24 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       - Platform: Learn Z
       - Creators: Malang Code Innovators
       - Purpose: Educational assistance and video lesson analysis.
+      
+      ROLE & LOGIN TYPE AWARENESS (CRITICAL):
+      - You MUST always check the user's "Login Type" before handling institution-related queries.
+      - IF Login Type is "personal":
+        - You CANNOT access institutional courses or features.
+        - If the user asks about institutional courses, respond: "You are currently using a personal account. Institutional courses are not available."
+      - IF Login Type is "institutional":
+        - You can access both personal and institutional courses.
+        - Institutional courses are found in the "InstuTube" page or the "Institutional" tab in the classroom.
+      
+      INSTITUTION ENROLLMENT CHECK:
+      - When checking enrollments, differentiate between personal and institutional.
+      - If a user asks "Am I enrolled in this course (institution)?", check their institutional enrollment status.
+      
+      INSTUTUBE & LEARNTUBE NAVIGATION:
+      - "LearnTube" is for personal courses.
+      - "InstuTube" is for institution-recommended courses.
+      - IF a course is institution-recommended, ALWAYS navigate to "InstuTube" instead of "LearnTube".
       
       PLATFORM AWARENESS & DATA RETRIEVAL:
       - You have real-time access to the student's platform data through specialized tools.
@@ -635,7 +657,17 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       - Use "search_courses" and "recommend_courses" to help students find new content.
       - Use "enroll_course" to help them get started with a new course.
       - Use "get_video_timestamp" to know exactly where the student is in the video.
+      - Use "switch_to_personal_courses" and "switch_to_institution_courses" to switch tabs in the classroom.
       - ALWAYS confirm your actions to the user (e.g., "Sure, I'm pausing the video for you."), EXCEPT for "play_video" which should be silent or minimal.
+      
+      UI-SYNCED SEARCH (CRITICAL):
+      - When a user says "Search [course]", you MUST:
+        1. Use the "search_courses" tool.
+        2. This tool will automatically navigate to LearnTube and filter the UI.
+        3. You should then describe the matching results to the user.
+      
+      SAFE EXECUTION:
+      - All your actions are executed through tools. If a tool fails, you will be notified.
       
       ADAPTIVE TUTORING STRATEGY:
       1. Use the User Learning Profile to adapt your tone and complexity.
@@ -645,7 +677,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       
       IMPORTANT RULES:
       1. If the student is NOT in a classroom (as indicated above), and they ask about a video, lesson, or specific course content, you MUST politely tell them: "I see you're currently on the ${location} page. Please go inside the classroom and open a lesson first, then I'll be able to help you with the video content. Would you like me to take you to the classroom now?"
-      2. You have the "navigate_to_page" tool. Use it to help the user switch between pages like the classroom, courses, or their profile.
+      2. You have the "navigate_to_page" tool. Use it to help the user switch between pages like the classroom, courses, home, profile, admin panel, or InstuTube.
       3. Your current version only supports video lesson assistance when the student is inside the classroom.
       4. Acknowledge context changes immediately when they happen. You should be proactive in mentioning you've seen the new lesson content.
       5. You are proud to be part of Learn Z and Malang Code Innovators.
@@ -681,6 +713,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             recommendCoursesTool,
             checkEnrollmentTool,
             enrollCourseTool,
+            switchToPersonalCoursesTool,
+            switchToInstitutionCoursesTool,
             playVideoTool,
             pauseVideoTool,
             getVideoTimestampTool,
@@ -794,9 +828,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                       case "home": path = "/"; break;
                       case "classroom": path = navCourseId ? `/classroom/${navCourseId}` : "/classroom"; break;
                       case "learntube": path = "/learntube"; break;
+                      case "instutube": path = "/instutube"; break;
                       case "assistant": path = "/assistant"; break;
                       case "memory": path = "/memory"; break;
                       case "admin": path = "/admin"; break;
+                      case "institution-admin": path = "/institution-admin"; break;
                       case "math-tutor": path = "/math-tutor"; break;
                       default: path = "/";
                     }
@@ -859,11 +895,18 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     setIsProcessing(true);
                     // UI Synchronized Search: Navigate to LearnTube and trigger search
                     navigate(`/learntube?q=${encodeURIComponent(query)}`);
-                    const courses = await searchCourses(query);
-                    setIsProcessing(false);
-                    sessionPromise.then(session => {
-                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "search_courses", id: call.id, response: { courses } }] });
-                    }).catch(err => console.error("Tool response error (search_courses):", err));
+                    searchCourses(query).then(courses => {
+                      setIsProcessing(false);
+                      sessionPromise.then(session => {
+                        if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "search_courses", id: call.id, response: { courses } }] });
+                      }).catch(err => console.error("Tool response error (search_courses):", err));
+                    }).catch(err => {
+                      console.error("Search courses error:", err);
+                      setIsProcessing(false);
+                      sessionPromise.then(session => {
+                        if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "search_courses", id: call.id, response: { error: "Failed to search courses." } }] });
+                      }).catch(e => console.error("Tool response error (search_courses failure):", e));
+                    });
                   } else if (call.name === "recommend_courses") {
                     const { userId } = call.args as any;
                     setIsProcessing(true);
@@ -888,6 +931,16 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "enroll_course", id: call.id, response: { enrollment } }] });
                     }).catch(err => console.error("Tool response error (enroll_course):", err));
+                  } else if (call.name === "switch_to_personal_courses") {
+                    dispatchAction("SWITCH_TAB", { tab: 'personal' });
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "switch_to_personal_courses", id: call.id, response: { output: `Switched to personal courses tab.` } }] });
+                    }).catch(err => console.error("Tool response error (switch_to_personal_courses):", err));
+                  } else if (call.name === "switch_to_institution_courses") {
+                    dispatchAction("SWITCH_TAB", { tab: 'institution' });
+                    sessionPromise.then(session => {
+                      if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "switch_to_institution_courses", id: call.id, response: { output: `Switched to institutional courses tab.` } }] });
+                    }).catch(err => console.error("Tool response error (switch_to_institution_courses):", err));
                   } else if (call.name === "play_video") {
                     dispatchAction("PLAY_VIDEO", {});
                     sessionPromise.then(session => {

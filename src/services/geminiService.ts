@@ -234,13 +234,13 @@ export const searchMemoryTool: FunctionDeclaration = {
 
 export const navigateToPageTool: FunctionDeclaration = {
   name: "navigate_to_page",
-  description: "Navigate the user to a specific page on the Learn Z platform. Use this when the user asks to go to the classroom, courses, home, profile, or admin panel.",
+  description: "Navigate the user to a specific page on the Learn Z platform. Use this when the user asks to go to the classroom, courses, home, profile, admin panel, or InstuTube (for institutional courses).",
   parameters: {
     type: Type.OBJECT,
     properties: {
       page: {
         type: Type.STRING,
-        enum: ["home", "classroom", "learntube", "assistant", "memory", "admin"],
+        enum: ["home", "classroom", "learntube", "instutube", "assistant", "memory", "admin", "institution-admin"],
         description: "The page to navigate to."
       },
       courseId: {
@@ -526,6 +526,24 @@ export const enrollCourseTool: FunctionDeclaration = {
       }
     },
     required: ["userId", "courseId"]
+  }
+};
+
+export const switchToPersonalCoursesTool: FunctionDeclaration = {
+  name: "switch_to_personal_courses",
+  description: "Switch the classroom view to show the student's personal enrolled courses.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {}
+  }
+};
+
+export const switchToInstitutionCoursesTool: FunctionDeclaration = {
+  name: "switch_to_institution_courses",
+  description: "Switch the classroom view to show the student's institutional (recommended) courses.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {}
   }
 };
 
