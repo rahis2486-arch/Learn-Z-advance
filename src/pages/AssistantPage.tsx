@@ -3,11 +3,13 @@ import { motion, AnimatePresence } from "motion/react";
 import { Mic, MicOff, Camera, CameraOff, Brain, Power, X, Sparkles, RefreshCw } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAssistant } from "../contexts/AssistantContext";
+import { useAuth } from "../contexts/AuthContext";
 import { NovaAvatar } from "../components/NovaAvatar";
 import { ConfirmModal } from "../components/ConfirmModal";
-import { clearAllMemories, updateLongTermSummary } from "../services/geminiService";
+import { clearAllMemories, updateLongTermSummary, clearChatHistory } from "../services/geminiService";
 
 export default function AssistantPage() {
+  const { user } = useAuth();
   const {
     isLive,
     isCameraOn,
@@ -103,9 +105,13 @@ export default function AssistantPage() {
   const s = themeStyles[theme] || themeStyles.dark;
 
   const handleClearMemories = async () => {
+    if (!user?.uid) return;
     try {
-      await clearAllMemories();
-      await updateLongTermSummary("");
+      await Promise.all([
+        clearAllMemories(user.uid),
+        updateLongTermSummary("", user.uid),
+        clearChatHistory(user.uid)
+      ]);
       window.location.reload(); // Refresh to clear state
     } catch (err) {
       console.error("Failed to clear memories:", err);

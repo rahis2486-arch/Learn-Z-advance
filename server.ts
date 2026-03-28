@@ -43,6 +43,7 @@ const MemorySchema = new mongoose.Schema({
   embedding: [Number],
   type: { type: String, default: 'short-term' },
   userId: String,
+  courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', default: null }, // NEW: Course-level scoping
   timestamp: { type: Date, default: Date.now }
 });
 const Memory = mongoose.model('Memory', MemorySchema);
@@ -50,11 +51,37 @@ const Memory = mongoose.model('Memory', MemorySchema);
 const SummarySchema = new mongoose.Schema({
   content: String,
   userId: String,
+  courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', default: null }, // NEW: Course-level scoping
   updated_at: { type: Date, default: Date.now }
 });
 const Summary = mongoose.model('Summary', SummarySchema);
 
+const LearningProfileSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  interests: [String],
+  strongSubjects: [String],
+  weakSubjects: [String],
+  learningSpeed: { type: String, enum: ['slow', 'average', 'fast'], default: 'average' },
+  performanceTrends: [{
+    date: { type: Date, default: Date.now },
+    averageScore: Number,
+    completionRate: Number
+  }],
+  completedCourses: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Course' }],
+  weakTopics: [{
+    topic: String,
+    courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course' },
+    failCount: { type: Number, default: 0 },
+    lastAttemptScore: Number
+  }],
+  aiInsights: String,
+  updatedAt: { type: Date, default: Date.now }
+});
+const LearningProfile = mongoose.model('LearningProfile', LearningProfileSchema);
+
 const ChatHistorySchema = new mongoose.Schema({
+  userId: String,
+  courseId: { type: mongoose.Schema.Types.ObjectId, ref: 'Course', default: null }, // NEW: Course-level scoping
   role: String,
   content: String,
   timestamp: { type: Date, default: Date.now }
@@ -351,9 +378,14 @@ async function startServer() {
     try {
       const { institutionId, courseId, recommendedBy } = req.body;
       
-      // Check if user is admin of this institution
+      // Check if user is admin of this institution or global admin
       const user = await User.findOne({ uid: recommendedBy });
-      if (!user || user.role !== 'admin' || user.institutionId?.toString() !== institutionId) {
+      const isAllowed = user && (
+        user.role === 'admin' || 
+        (user.role === 'institution_admin' && user.institutionId?.toString() === institutionId)
+      );
+
+      if (!isAllowed) {
         return res.status(403).json({ error: "Only institution admins can recommend courses" });
       }
 
@@ -364,6 +396,7 @@ async function startServer() {
       if ((err as any).code === 11000) {
         return res.status(400).json({ error: "Course already recommended" });
       }
+      console.error("Failed to recommend course:", err);
       res.status(500).json({ error: "Failed to recommend course" });
     }
   });
@@ -411,13 +444,19 @@ async function startServer() {
       const uid = req.headers['x-user-uid'];
       
       const user = await User.findOne({ uid });
-      if (!user || user.role !== 'admin' || user.institutionId?.toString() !== institutionId) {
+      const isAllowed = user && (
+        user.role === 'admin' || 
+        (user.role === 'institution_admin' && user.institutionId?.toString() === institutionId)
+      );
+
+      if (!isAllowed) {
         return res.status(403).json({ error: "Only institution admins can remove recommendations" });
       }
 
       await Recommendation.findOneAndDelete({ institutionId, courseId });
       res.json({ success: true });
     } catch (err) {
+      console.error("Failed to remove recommendation:", err);
       res.status(500).json({ error: "Failed to remove recommendation" });
     }
   });
@@ -924,10 +963,103 @@ async function startServer() {
         });
       }
       await progress.save();
+
+      // Update Learning Profile & Detect Weaknesses
+      try {
+        const lesson = await Lesson.findById(lessonId);
+        const topic = lesson ? lesson.title : "Unknown Topic";
+        const isFail = (score / totalQuestions) < 0.6;
+
+        let profile = await LearningProfile.findOne({ userId: uid });
+        if (!profile) {
+          const user = await User.findOne({ uid });
+          profile = new LearningProfile({ 
+            userId: uid,
+            interests: user ? user.interests : []
+          });
+        }
+
+        // Update weak topics
+        let weakTopic = profile.weakTopics.find((wt: any) => wt.topic === topic && wt.courseId.toString() === courseId);
+        if (isFail) {
+          if (weakTopic) {
+            weakTopic.failCount += 1;
+            weakTopic.lastAttemptScore = score;
+          } else {
+            profile.weakTopics.push({
+              topic,
+              courseId,
+              failCount: 1,
+              lastAttemptScore: score
+            });
+          }
+          if (!profile.weakSubjects.includes(topic)) {
+            profile.weakSubjects.push(topic);
+          }
+          // Remove from strong if it was there
+          profile.strongSubjects = profile.strongSubjects.filter((s: string) => s !== topic) as any;
+        } else {
+          // Success
+          if (weakTopic) {
+            weakTopic.failCount = Math.max(0, weakTopic.failCount - 1);
+            if (weakTopic.failCount === 0) {
+              profile.weakTopics = profile.weakTopics.filter((wt: any) => wt.topic !== topic || wt.courseId.toString() !== courseId) as any;
+              profile.weakSubjects = profile.weakSubjects.filter((s: string) => s !== topic) as any;
+            }
+          }
+          if (!profile.strongSubjects.includes(topic)) {
+            profile.strongSubjects.push(topic);
+          }
+        }
+
+        // Update trends
+        profile.performanceTrends.push({
+          averageScore: (score / totalQuestions) * 100,
+          completionRate: 100 // One quiz completed
+        });
+        if (profile.performanceTrends.length > 20) profile.performanceTrends.shift();
+
+        profile.updatedAt = new Date();
+        await profile.save();
+      } catch (profileErr) {
+        console.error("Failed to update learning profile:", profileErr);
+      }
+
       res.json(progress);
     } catch (err) {
       console.error("Quiz save error:", err);
       res.status(500).json({ error: "Failed to save quiz result" });
+    }
+  });
+
+  // Learning Profile APIs
+  app.get("/api/learning-profile", async (req, res) => {
+    try {
+      const { userId } = req.query;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      let profile = await LearningProfile.findOne({ userId });
+      if (!profile) {
+        const user = await User.findOne({ uid: userId as string });
+        profile = new LearningProfile({ 
+          userId: userId as string,
+          interests: user ? user.interests : []
+        });
+        await profile.save();
+      }
+      res.json(profile);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch learning profile" });
+    }
+  });
+
+  app.post("/api/learning-profile/insights", async (req, res) => {
+    try {
+      const { userId, insights } = req.body;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      await LearningProfile.findOneAndUpdate({ userId }, { aiInsights: insights, updatedAt: new Date() }, { upsert: true });
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update insights" });
     }
   });
 
@@ -1044,7 +1176,12 @@ async function startServer() {
   // Migrated Memory APIs
   app.get("/api/history", async (req, res) => {
     try {
-      const history = await ChatHistory.find().sort({ timestamp: -1 }).limit(50);
+      const { userId, courseId } = req.query;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      const query: any = { userId };
+      if (courseId) query.courseId = courseId;
+      else query.courseId = null; // Default to global if not specified
+      const history = await ChatHistory.find(query).sort({ timestamp: -1 }).limit(50);
       res.json(history);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch history" });
@@ -1053,7 +1190,9 @@ async function startServer() {
 
   app.post("/api/chat/store", async (req, res) => {
     try {
-      const chat = new ChatHistory(req.body);
+      const { userId, role, content, courseId } = req.body;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      const chat = new ChatHistory({ userId, role, content, courseId: courseId || null });
       await chat.save();
       res.json({ success: true });
     } catch (err) {
@@ -1063,7 +1202,11 @@ async function startServer() {
 
   app.delete("/api/chat/history", async (req, res) => {
     try {
-      await ChatHistory.deleteMany({});
+      const { userId, courseId } = req.query;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      const query: any = { userId };
+      if (courseId) query.courseId = courseId;
+      await ChatHistory.deleteMany(query);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to clear history" });
@@ -1072,7 +1215,9 @@ async function startServer() {
 
   app.post("/api/memory/store", async (req, res) => {
     try {
-      const memory = new Memory(req.body);
+      const { userId, content, embedding, type, courseId } = req.body;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      const memory = new Memory({ userId, content, embedding, type, courseId: courseId || null });
       await memory.save();
       res.json({ success: true });
     } catch (err) {
@@ -1082,10 +1227,12 @@ async function startServer() {
 
   app.get("/api/memory/list", async (req, res) => {
     try {
-      const { type, userId } = req.query;
-      const query: any = {};
+      const { type, userId, courseId } = req.query;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      const query: any = { userId };
       if (type) query.type = type;
-      if (userId) query.userId = userId;
+      if (courseId) query.courseId = courseId;
+      else query.courseId = null; // Default to global if not specified
       const memories = await Memory.find(query).sort({ timestamp: -1 }).limit(100);
       res.json(memories);
     } catch (err) {
@@ -1095,8 +1242,10 @@ async function startServer() {
 
   app.delete("/api/memory", async (req, res) => {
     try {
-      const { userId } = req.query;
-      const query = userId ? { userId } : {};
+      const { userId, courseId } = req.query;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      const query: any = { userId };
+      if (courseId) query.courseId = courseId;
       await Memory.deleteMany(query);
       res.json({ success: true });
     } catch (err) {
@@ -1106,6 +1255,12 @@ async function startServer() {
 
   app.delete("/api/memory/:id", async (req, res) => {
     try {
+      const { userId } = req.query;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      
+      const memory = await Memory.findOne({ _id: req.params.id, userId });
+      if (!memory) return res.status(404).json({ error: "Memory not found or unauthorized" });
+      
       await Memory.findByIdAndDelete(req.params.id);
       res.json({ success: true });
     } catch (err) {
@@ -1115,10 +1270,12 @@ async function startServer() {
 
   app.post("/api/memory/search", async (req, res) => {
     try {
-      const { embedding, limit = 5, type, userId } = req.body;
-      const query: any = {};
+      const { embedding, limit = 5, type, userId, courseId } = req.body;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      const query: any = { userId };
       if (type) query.type = type;
-      if (userId) query.userId = userId;
+      if (courseId) query.courseId = courseId;
+      else query.courseId = null; // Default to global if not specified
       const memories = await Memory.find(query);
       
       if (!embedding || embedding.length === 0) {
@@ -1154,14 +1311,19 @@ async function startServer() {
 
   app.get("/api/summary", async (req, res) => {
     try {
-      const { userId } = req.query;
-      console.log(`GET /api/summary - userId: ${userId}`);
+      const { userId, courseId } = req.query;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
       
-      const query = userId ? { userId } : {};
+      console.log(`GET /api/summary - userId: ${userId}, courseId: ${courseId}`);
+      
+      const query: any = { userId };
+      if (courseId) query.courseId = courseId;
+      else query.courseId = null;
+
       const summary = await Summary.findOne(query).sort({ updated_at: -1 });
       
-      if (!summary && userId) {
-        console.log(`No summary found for userId: ${userId}, returning empty`);
+      if (!summary) {
+        console.log(`No summary found for userId: ${userId}, courseId: ${courseId}, returning empty`);
       }
       
       res.json(summary || { content: "" });
@@ -1173,15 +1335,30 @@ async function startServer() {
 
   app.post("/api/summary", async (req, res) => {
     try {
-      const { content, userId } = req.body;
-      console.log(`POST /api/summary - userId: ${userId}, content length: ${content?.length}`);
+      const { content, userId, courseId } = req.body;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      
+      console.log(`POST /api/summary - userId: ${userId}, courseId: ${courseId}, content length: ${content?.length}`);
       
       if (!content && content !== "") {
         return res.status(400).json({ error: "Content is required" });
       }
 
-      const summary = new Summary({ content, userId });
-      await summary.save();
+      // Update existing summary or create new one
+      const query: any = { userId };
+      if (courseId) query.courseId = courseId;
+      else query.courseId = null;
+
+      let summary = await Summary.findOne(query);
+      if (summary) {
+        summary.content = content;
+        summary.updated_at = new Date();
+        await summary.save();
+      } else {
+        summary = new Summary({ content, userId, courseId: courseId || null });
+        await summary.save();
+      }
+      
       console.log("Summary saved successfully");
       res.json({ success: true });
     } catch (err) {
@@ -1204,6 +1381,8 @@ async function startServer() {
 
   app.post("/api/math/sessions", async (req, res) => {
     try {
+      const { userId } = req.body;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
       const session = new MathSession(req.body);
       await session.save();
       res.json(session);
@@ -1214,8 +1393,10 @@ async function startServer() {
 
   app.get("/api/math/sessions/:id", async (req, res) => {
     try {
-      const session = await MathSession.findById(req.params.id);
-      if (!session) return res.status(404).json({ error: "Session not found" });
+      const { userId } = req.query;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      const session = await MathSession.findOne({ _id: req.params.id, userId });
+      if (!session) return res.status(404).json({ error: "Session not found or unauthorized" });
       res.json(session);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch math session" });
@@ -1224,7 +1405,14 @@ async function startServer() {
 
   app.put("/api/math/sessions/:id", async (req, res) => {
     try {
-      const session = await MathSession.findByIdAndUpdate(req.params.id, req.body, { new: true });
+      const { userId } = req.body;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      const session = await MathSession.findOneAndUpdate(
+        { _id: req.params.id, userId },
+        req.body,
+        { new: true }
+      );
+      if (!session) return res.status(404).json({ error: "Session not found or unauthorized" });
       res.json(session);
     } catch (err) {
       res.status(500).json({ error: "Failed to update math session" });
@@ -1233,7 +1421,10 @@ async function startServer() {
 
   app.delete("/api/math/sessions/:id", async (req, res) => {
     try {
-      await MathSession.findByIdAndDelete(req.params.id);
+      const { userId } = req.query;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+      const session = await MathSession.findOneAndDelete({ _id: req.params.id, userId });
+      if (!session) return res.status(404).json({ error: "Session not found or unauthorized" });
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to delete math session" });

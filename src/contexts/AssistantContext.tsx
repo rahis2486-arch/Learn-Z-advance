@@ -13,9 +13,19 @@ import {
   storeMemoryTool, 
   searchMemoryTool,
   navigateToPageTool,
+  getDashboardStatsTool,
+  getUserProgressTool,
+  getLearningProfileTool,
+  getDashboardStats,
+  getUserProgress,
   getLongTermSummary,
   updateLongTermSummary,
-  generateNewSummary
+  generateNewSummary,
+  getChatHistory,
+  storeChatMessage,
+  clearChatHistory,
+  getLearningProfile,
+  updateLearningInsights
 } from "../services/geminiService";
 
 interface AssistantContextType {
@@ -30,8 +40,11 @@ interface AssistantContextType {
   userVolume: number;
   aiVolume: number;
   longTermSummary: string;
+  courseSummary: string;
+  learningProfile: any;
   isSidebarOpen: boolean;
   messages: ChatMessage[];
+  courseId: string | null;
   context: any;
   mathContext: any;
   location: string;
@@ -68,11 +81,26 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [userVolume, setUserVolume] = useState(0);
   const [aiVolume, setAiVolume] = useState(0);
   const [longTermSummary, setLongTermSummary] = useState("");
+  const [courseSummary, setCourseSummary] = useState("");
+  const [learningProfile, setLearningProfile] = useState<any>(null);
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [courseId, setCourseId] = useState<string | null>(null);
   const [context, setContext] = useState<any>(null);
   const [mathContext, setMathContext] = useState<any>(null);
   const [location, setLocation] = useState<string>("/");
+
+  // Extract courseId from location
+  useEffect(() => {
+    const pathParts = window.location.pathname.split('/');
+    const classroomIdx = pathParts.indexOf('classroom');
+    if (classroomIdx !== -1 && pathParts[classroomIdx + 1]) {
+      setCourseId(pathParts[classroomIdx + 1]);
+    } else {
+      setCourseId(null);
+    }
+  }, [window.location.pathname]);
+
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [theme, setThemeState] = useState<'dark' | 'light'>(() => {
@@ -110,13 +138,42 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   useEffect(() => {
     const init = async () => {
-      const summary = await getLongTermSummary(user?.uid);
-      setLongTermSummary(summary);
-      memorySoundRef.current = new Audio("https://cdn.pixabay.com/audio/2022/03/10/audio_c3508e3d05.mp3");
-      memorySoundRef.current.volume = 0.3;
+      if (!user?.uid) {
+        setLongTermSummary("");
+        setCourseSummary("");
+        setLearningProfile(null);
+        setMessages([]);
+        return;
+      }
+      
+      try {
+        const [summary, cSummary, profile, history] = await Promise.all([
+          getLongTermSummary(user.uid),
+          courseId ? getLongTermSummary(user.uid, courseId) : Promise.resolve(""),
+          getLearningProfile(user.uid),
+          getChatHistory(user.uid, courseId || undefined)
+        ]);
+        
+        setLongTermSummary(summary);
+        setCourseSummary(cSummary);
+        setLearningProfile(profile);
+        // Convert history from DB format if needed
+        setMessages(history.map((h: any) => ({
+          role: h.role,
+          content: h.content,
+          timestamp: new Date(h.timestamp).getTime()
+        })));
+      } catch (err) {
+        console.error("Failed to initialize assistant context:", err);
+      }
+      
+      if (!memorySoundRef.current) {
+        memorySoundRef.current = new Audio("https://cdn.pixabay.com/audio/2022/03/10/audio_c3508e3d05.mp3");
+        memorySoundRef.current.volume = 0.3;
+      }
     };
     init();
-  }, [user?.uid]);
+  }, [user?.uid, courseId]);
 
   // AI Volume simulation
   useEffect(() => {
@@ -247,13 +304,34 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const finalizeSessionSummary = async () => {
+    if (!user?.uid) return;
     const allSessionFacts = [...sessionRetrievalFactsRef.current, ...sessionLongTermFactsRef.current];
     if (allSessionFacts.length === 0) return;
     try {
-      const currentSummary = await getLongTermSummary(user?.uid);
-      const newSummary = await generateNewSummary(allSessionFacts, currentSummary);
-      await updateLongTermSummary(newSummary, user?.uid);
-      setLongTermSummary(newSummary);
+      // Update global summary
+      const currentGlobalSummary = await getLongTermSummary(user.uid);
+      const newGlobalSummary = await generateNewSummary(allSessionFacts, currentGlobalSummary);
+      await updateLongTermSummary(newGlobalSummary, user.uid);
+      setLongTermSummary(newGlobalSummary);
+
+      // Update course summary if applicable
+      if (courseId) {
+        const currentCourseSummary = await getLongTermSummary(user.uid, courseId);
+        const newCourseSummary = await generateNewSummary(allSessionFacts, currentCourseSummary);
+        await updateLongTermSummary(newCourseSummary, user.uid, courseId);
+        setCourseSummary(newCourseSummary);
+      }
+
+      // Update Learning Profile Insights
+      const profile = await getLearningProfile(user.uid);
+      if (profile) {
+        const insightsPrompt = `Based on these new session facts: ${allSessionFacts.join(', ')}, and the current AI insights: ${profile.aiInsights}, generate updated learning insights for the student. Focus on their progress, interests, and any new areas of strength or weakness identified.`;
+        const newInsights = await updateLearningInsights(user.uid, insightsPrompt);
+        // The updateLearningInsights function in geminiService doesn't return the new insights yet, 
+        // but we can fetch the profile again or just assume it's updated.
+        const updatedProfile = await getLearningProfile(user.uid);
+        if (updatedProfile) setLearningProfile(updatedProfile);
+      }
     } catch (err) {
       console.error("Failed to finalize summary:", err);
     }
@@ -379,7 +457,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       if (retryCount === 0) triggerMemoryEffect();
       
       const initialEmbedding = await generateEmbedding("User profile, preferences, name, and recent activities");
-      const initialMemories = initialEmbedding ? await searchMemory(initialEmbedding, undefined, user?.uid) : []; 
+      const initialMemories = (initialEmbedding && user?.uid) ? await searchMemory(initialEmbedding, 'long-term', user.uid, courseId || undefined) : []; 
       const memoryContext = initialMemories.length > 0 ? "\n\nYOUR LONG-TERM MEMORY ABOUT THE USER:\n" + initialMemories.map(m => m.content).join("\n") : "";
       
       const classroomContext = context 
@@ -404,6 +482,21 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
            - Wait for the student to acknowledge before moving to the next step.`
         : "The student is currently NOT in the Math Tutor Canvas.";
 
+      const learningProfileContext = learningProfile 
+        ? `USER LEARNING PROFILE:
+           - Interests: ${learningProfile.interests?.join(', ') || 'None'}
+           - Strong Subjects: ${learningProfile.strongSubjects?.join(', ') || 'None'}
+           - Weak Subjects: ${learningProfile.weakSubjects?.join(', ') || 'None'}
+           - Learning Speed: ${learningProfile.learningSpeed || 'Average'}
+           - Weak Topics (Course Specific): ${learningProfile.weakTopics?.map((wt: any) => `${wt.topic} (Course: ${wt.courseId})`).join(', ') || 'None'}
+           - AI Insights: ${learningProfile.aiInsights || 'No insights yet.'}`
+        : "";
+
+      const courseContext = courseSummary 
+        ? `COURSE-SPECIFIC MEMORY:
+           - Summary of previous interactions in this course: ${courseSummary}`
+        : "";
+
       const systemInstruction = `You are Nova, a highly intelligent and friendly AI assistant for the "Learn Z" platform, developed by Malang Code Innovators. 
       Your primary role is to assist students in their learning journey by providing deep insights into video lessons, summarizing course content, and answering questions about the curriculum.
       
@@ -415,12 +508,29 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       USER LOCATION: The student is currently on the "${location}" page.
       ${classroomContext}
       ${mathTutorContext}
+      ${learningProfileContext}
+      ${courseContext}
       
       IDENTITY & PLATFORM:
       - Name: Nova
       - Platform: Learn Z
       - Creators: Malang Code Innovators
       - Purpose: Educational assistance and video lesson analysis.
+      
+      PLATFORM AWARENESS & DATA RETRIEVAL:
+      - You have real-time access to the student's platform data through specialized tools.
+      - Use "get_dashboard_stats" to see their overall progress, enrolled courses, and recent quiz results.
+      - Use "get_user_progress" for detailed progress across all their courses.
+      - Use "get_learning_profile" to understand their long-term learning patterns, interests, and AI-identified weak areas.
+      - When a student asks about their progress, grades, or "how they are doing", ALWAYS use these tools to get the latest data before responding.
+      - Combine the data from these tools with your memory of their past interactions to provide a truly personalized experience.
+      - If you can't find specific data, be honest and suggest where they can find it on the platform.
+      
+      ADAPTIVE TUTORING STRATEGY:
+      1. Use the User Learning Profile to adapt your tone and complexity.
+      2. If a student is struggling with a "Weak Topic" (listed above), provide more detailed explanations and encouraging feedback.
+      3. If they are fast learners, provide more challenging insights.
+      4. Reference their interests to make learning more relatable.
       
       IMPORTANT RULES:
       1. If the student is NOT in a classroom (as indicated above), and they ask about a video, lesson, or specific course content, you MUST politely tell them: "I see you're currently on the ${location} page. Please go inside the classroom and open a lesson first, then I'll be able to help you with the video content. Would you like me to take you to the classroom now?"
@@ -449,7 +559,14 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             maxOutputTokens: 2048,
             temperature: 0.7,
           },
-          tools: [{ functionDeclarations: [storeMemoryTool, searchMemoryTool, navigateToPageTool] }]
+          tools: [{ functionDeclarations: [
+            storeMemoryTool, 
+            searchMemoryTool, 
+            navigateToPageTool,
+            getDashboardStatsTool,
+            getUserProgressTool,
+            getLearningProfileTool
+          ] }]
         },
         callbacks: {
           onopen: () => {
@@ -473,7 +590,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                   if (type === 'long-term') sessionLongTermFactsRef.current.push(content);
                   else sessionRetrievalFactsRef.current.push(content);
                   const embedding = await generateEmbedding(content);
-                  if (embedding) await storeMemory(content, embedding, type, user?.uid);
+                  if (embedding && user?.uid) await storeMemory(content, embedding, type, user.uid, courseId || undefined);
                   setIsProcessing(false);
                   sessionPromise.then(session => {
                     if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "store_memory", id: call.id, response: { output: `Fact stored.` } }] });
@@ -484,12 +601,12 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                   const embedding = await generateEmbedding(query);
                   
                   // Prioritized search: Short-term first
-                  let results = embedding ? await searchMemory(embedding, 'short-term', user?.uid) : [];
+                  let results = (embedding && user?.uid) ? await searchMemory(embedding, 'short-term', user.uid, courseId || undefined) : [];
                   let source = 'short-term';
                   
-                  if (results.length === 0 && embedding) {
+                  if (results.length === 0 && embedding && user?.uid) {
                     // If not found in short-term, search long-term
-                    results = await searchMemory(embedding, 'long-term', user?.uid);
+                    results = await searchMemory(embedding, 'long-term', user.uid, courseId || undefined);
                     source = 'long-term';
                   }
                   
@@ -507,12 +624,54 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                       }] 
                     });
                   });
+                } else if (call.name === "get_dashboard_stats") {
+                  const { userId } = call.args as any;
+                  setIsProcessing(true);
+                  const stats = await getDashboardStats(userId);
+                  setIsProcessing(false);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ 
+                      functionResponses: [{ 
+                        name: "get_dashboard_stats", 
+                        id: call.id, 
+                        response: { stats } 
+                      }] 
+                    });
+                  });
+                } else if (call.name === "get_user_progress") {
+                  const { userId } = call.args as any;
+                  setIsProcessing(true);
+                  const progress = await getUserProgress(userId);
+                  setIsProcessing(false);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ 
+                      functionResponses: [{ 
+                        name: "get_user_progress", 
+                        id: call.id, 
+                        response: { progress } 
+                      }] 
+                    });
+                  });
+                } else if (call.name === "get_learning_profile") {
+                  const { userId } = call.args as any;
+                  setIsProcessing(true);
+                  const profile = await getLearningProfile(userId);
+                  setIsProcessing(false);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ 
+                      functionResponses: [{ 
+                        name: "get_learning_profile", 
+                        id: call.id, 
+                        response: { profile } 
+                      }] 
+                    });
+                  });
                 } else if (call.name === "navigate_to_page") {
-                  const { page, courseId } = call.args as any;
+                  const { page, courseId: navCourseId } = call.args as any;
                   let path = "/";
                   switch(page) {
                     case "home": path = "/"; break;
-                    case "classroom": path = courseId ? `/classroom/${courseId}` : "/classroom"; break;
+                    case "classroom": path = navCourseId ? `/classroom/${navCourseId}` : "/classroom"; break;
                     case "learntube": path = "/learntube"; break;
                     case "assistant": path = "/assistant"; break;
                     case "memory": path = "/memory"; break;
@@ -534,6 +693,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               const newMsg: ChatMessage = { role: 'user', content: text, timestamp: Date.now() };
               sessionMessagesRef.current.push(newMsg);
               setMessages(prev => [...prev, newMsg]);
+              if (user?.uid) storeChatMessage(user.uid, 'user', text, courseId || undefined);
             }
             if (message.serverContent?.modelTurn?.parts) {
               setIsThinking(false);
@@ -543,17 +703,18 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 const newMsg: ChatMessage = { role: 'model', content: text, timestamp: Date.now() };
                 sessionMessagesRef.current.push(newMsg);
                 setMessages(prev => [...prev, newMsg]);
-                if (lastUserMsg) {
+                if (user?.uid) storeChatMessage(user.uid, 'model', text, courseId || undefined);
+                if (lastUserMsg && user?.uid) {
                   extractDualMemories(lastUserMsg, text).then(async (memories) => {
                     for (const obs of memories.shortTerm) {
                       sessionRetrievalFactsRef.current.push(obs);
                       const emb = await generateEmbedding(obs);
-                      if (emb) await storeMemory(obs, emb, 'short-term', user?.uid);
+                      if (emb && user?.uid) await storeMemory(obs, emb, 'short-term', user.uid, courseId || undefined);
                     }
                     for (const fact of memories.longTerm) {
                       sessionLongTermFactsRef.current.push(fact);
                       const emb = await generateEmbedding(fact);
-                      if (emb) await storeMemory(fact, emb, 'long-term', user?.uid);
+                      if (emb && user?.uid) await storeMemory(fact, emb, 'long-term', user.uid, courseId || undefined);
                     }
                   });
                 }
@@ -650,7 +811,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   return (
     <AssistantContext.Provider value={{
       isLive, isCameraOn, isMicOn, isSpeaking, isThinking, isProcessing, isConnecting, isMemoryAction,
-      userVolume, aiVolume, longTermSummary, isSidebarOpen, messages, context, mathContext, location, theme,
+      userVolume, aiVolume, longTermSummary, courseSummary, learningProfile, isSidebarOpen, messages, courseId, context, mathContext, location, theme,
       facingMode, stream, setContext, setMathContext, setLocation, setTheme, toggleSidebar, toggleCamera, switchCamera, toggleMic, startLiveSession, cleanupSession, setSidebarOpen
     }}>
       {children}

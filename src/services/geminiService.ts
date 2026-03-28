@@ -10,9 +10,12 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-export async function getChatHistory(): Promise<ChatMessage[]> {
+export async function getChatHistory(userId: string, courseId?: string): Promise<ChatMessage[]> {
   try {
-    const res = await fetch('/api/history');
+    if (!userId) return [];
+    let url = `/api/history?userId=${userId}`;
+    if (courseId) url += `&courseId=${courseId}`;
+    const res = await fetch(url);
     if (!res.ok) throw new Error(`Failed to fetch history: ${res.status}`);
     return res.json();
   } catch (err) {
@@ -21,21 +24,25 @@ export async function getChatHistory(): Promise<ChatMessage[]> {
   }
 }
 
-export async function clearChatHistory() {
+export async function clearChatHistory(userId: string, courseId?: string) {
   try {
-    const res = await fetch('/api/chat/history', { method: 'DELETE' });
+    if (!userId) return;
+    let url = `/api/chat/history?userId=${userId}`;
+    if (courseId) url += `&courseId=${courseId}`;
+    const res = await fetch(url, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to clear history: ${res.status}`);
   } catch (err) {
     console.error("Failed to clear history:", err);
   }
 }
 
-export async function storeChatMessage(role: 'user' | 'model', content: string) {
+export async function storeChatMessage(userId: string, role: 'user' | 'model', content: string, courseId?: string) {
   try {
+    if (!userId) return;
     const res = await fetch('/api/chat/store', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role, content }),
+      body: JSON.stringify({ userId, role, content, courseId }),
     });
     if (!res.ok) throw new Error(`Failed to store message: ${res.status}`);
   } catch (err) {
@@ -60,12 +67,13 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
   }
 }
 
-export async function storeMemory(content: string, embedding: number[], type: 'short-term' | 'long-term' = 'short-term', userId?: string) {
+export async function storeMemory(content: string, embedding: number[], type: 'short-term' | 'long-term' = 'short-term', userId: string, courseId?: string) {
   try {
+    if (!userId) throw new Error("userId is required to store memory");
     const response = await fetch('/api/memory/store', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, embedding, type, userId }),
+      body: JSON.stringify({ content, embedding, type, userId, courseId }),
     });
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -78,31 +86,37 @@ export async function storeMemory(content: string, embedding: number[], type: 's
   }
 }
 
-export async function clearAllMemories() {
+export async function clearAllMemories(userId: string, courseId?: string) {
   try {
-    const res = await fetch('/api/memory', { method: 'DELETE' });
+    if (!userId) return;
+    let url = `/api/memory?userId=${userId}`;
+    if (courseId) url += `&courseId=${courseId}`;
+    const res = await fetch(url, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to clear memories: ${res.status}`);
   } catch (err) {
     console.error("Failed to clear memories:", err);
   }
 }
 
-export async function deleteMemory(id: string) {
+export async function deleteMemory(id: string, userId: string) {
   try {
-    const res = await fetch(`/api/memory/${id}`, { method: 'DELETE' });
+    if (!userId) return;
+    const res = await fetch(`/api/memory/${id}?userId=${userId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to delete memory: ${res.status}`);
   } catch (err) {
     console.error("Failed to delete memory:", err);
   }
 }
 
-export async function listMemories(type?: 'short-term' | 'long-term', userId?: string): Promise<any[]> {
+export async function listMemories(type: 'short-term' | 'long-term' | undefined, userId: string, courseId?: string): Promise<any[]> {
   try {
+    if (!userId) return [];
     let url = '/api/memory/list';
     const params = new URLSearchParams();
     if (type) params.append('type', type);
-    if (userId) params.append('userId', userId);
-    if (params.toString()) url += `?${params.toString()}`;
+    params.append('userId', userId);
+    if (courseId) params.append('courseId', courseId);
+    url += `?${params.toString()}`;
     
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Failed to list memories: ${res.status}`);
@@ -118,12 +132,13 @@ export interface SearchResult {
   type: 'short-term' | 'long-term';
 }
 
-export async function searchMemory(embedding: number[], type?: 'short-term' | 'long-term', userId?: string): Promise<SearchResult[]> {
+export async function searchMemory(embedding: number[], type: 'short-term' | 'long-term' | undefined, userId: string, courseId?: string): Promise<SearchResult[]> {
   try {
+    if (!userId) return [];
     const res = await fetch('/api/memory/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ embedding, limit: 5, type, userId }),
+      body: JSON.stringify({ embedding, limit: 5, type, userId, courseId }),
     });
     if (!res.ok) throw new Error(`Failed to search memory: ${res.status}`);
     const results = await res.json();
@@ -237,10 +252,12 @@ export const navigateToPageTool: FunctionDeclaration = {
   }
 };
 
-export async function getLongTermSummary(userId?: string, retries = 3): Promise<string> {
+export async function getLongTermSummary(userId: string, courseId?: string, retries = 3): Promise<string> {
   try {
-    console.log(`Fetching long-term summary for userId: ${userId}...`);
-    const url = `${window.location.origin}/api/summary${userId ? `?userId=${userId}` : ''}`;
+    if (!userId) return "";
+    console.log(`Fetching long-term summary for userId: ${userId}, courseId: ${courseId}...`);
+    let url = `${window.location.origin}/api/summary?userId=${userId}`;
+    if (courseId) url += `&courseId=${courseId}`;
     
     const res = await fetch(url, {
       headers: {
@@ -261,7 +278,7 @@ export async function getLongTermSummary(userId?: string, retries = 3): Promise<
     if (retries > 0) {
       console.warn(`Retrying summary fetch... (${retries} left)`);
       await new Promise(resolve => setTimeout(resolve, 1000));
-      return getLongTermSummary(userId, retries - 1);
+      return getLongTermSummary(userId, courseId, retries - 1);
     }
     console.error("Failed to get summary:", err);
     // Return empty string as fallback to prevent app crash
@@ -269,16 +286,17 @@ export async function getLongTermSummary(userId?: string, retries = 3): Promise<
   }
 }
 
-export async function updateLongTermSummary(content: string, userId?: string) {
+export async function updateLongTermSummary(content: string, userId: string, courseId?: string) {
   try {
-    console.log(`Updating long-term summary for userId: ${userId}...`);
+    if (!userId) return;
+    console.log(`Updating long-term summary for userId: ${userId}, courseId: ${courseId}...`);
     const res = await fetch('/api/summary', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body: JSON.stringify({ content, userId }),
+      body: JSON.stringify({ content, userId, courseId }),
     });
     
     if (!res.ok) {
@@ -289,6 +307,114 @@ export async function updateLongTermSummary(content: string, userId?: string) {
     console.log("Summary updated successfully");
   } catch (err) {
     console.error("Failed to update summary:", err);
+  }
+}
+
+export interface LearningProfile {
+  userId: string;
+  interests: string[];
+  strongSubjects: string[];
+  weakSubjects: string[];
+  learningSpeed: 'slow' | 'average' | 'fast';
+  performanceTrends: { date: string; averageScore: number; completionRate: number }[];
+  completedCourses: string[];
+  weakTopics: { topic: string; courseId: string; failCount: number; lastAttemptScore: number }[];
+  aiInsights: string;
+  updatedAt: string;
+}
+
+export async function getLearningProfile(userId: string): Promise<LearningProfile | null> {
+  try {
+    if (!userId) return null;
+    const res = await fetch(`/api/learning-profile?userId=${userId}`);
+    if (!res.ok) throw new Error(`Failed to fetch learning profile: ${res.status}`);
+    return res.json();
+  } catch (err) {
+    console.error("Failed to get learning profile:", err);
+    return null;
+  }
+}
+
+export const getDashboardStatsTool: FunctionDeclaration = {
+  name: "get_dashboard_stats",
+  description: "Retrieve comprehensive dashboard statistics for the user, including enrolled courses, completion rates, activity history, and detailed lesson results.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      userId: {
+        type: Type.STRING,
+        description: "The unique ID of the user."
+      }
+    },
+    required: ["userId"]
+  }
+};
+
+export const getUserProgressTool: FunctionDeclaration = {
+  name: "get_user_progress",
+  description: "Retrieve detailed progress for all courses the user is enrolled in.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      userId: {
+        type: Type.STRING,
+        description: "The unique ID of the user."
+      }
+    },
+    required: ["userId"]
+  }
+};
+
+export const getLearningProfileTool: FunctionDeclaration = {
+  name: "get_learning_profile",
+  description: "Retrieve the user's long-term learning profile, including interests, strengths, weaknesses, and AI-generated insights.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      userId: {
+        type: Type.STRING,
+        description: "The unique ID of the user."
+      }
+    },
+    required: ["userId"]
+  }
+};
+
+export async function getDashboardStats(userId: string) {
+  try {
+    if (!userId) return null;
+    const res = await fetch(`/api/dashboard/stats/${userId}`);
+    if (!res.ok) throw new Error(`Failed to fetch dashboard stats: ${res.status}`);
+    return res.json();
+  } catch (err) {
+    console.error("Failed to get dashboard stats:", err);
+    return null;
+  }
+}
+
+export async function getUserProgress(userId: string) {
+  try {
+    if (!userId) return null;
+    const res = await fetch(`/api/progress/${userId}`);
+    if (!res.ok) throw new Error(`Failed to fetch user progress: ${res.status}`);
+    return res.json();
+  } catch (err) {
+    console.error("Failed to get user progress:", err);
+    return null;
+  }
+}
+
+export async function updateLearningInsights(userId: string, insights: string) {
+  try {
+    if (!userId) return;
+    const res = await fetch('/api/learning-profile/insights', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, insights }),
+    });
+    if (!res.ok) throw new Error(`Failed to update insights: ${res.status}`);
+  } catch (err) {
+    console.error("Failed to update insights:", err);
   }
 }
 
@@ -319,8 +445,9 @@ export async function getMathSessions(userId: string): Promise<MathSession[]> {
   }
 }
 
-export async function createMathSession(data: Partial<MathSession>): Promise<MathSession | null> {
+export async function createMathSession(data: Partial<MathSession> & { userId: string }): Promise<MathSession | null> {
   try {
+    if (!data.userId) throw new Error("userId is required to create math session");
     const res = await fetch('/api/math/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -334,8 +461,9 @@ export async function createMathSession(data: Partial<MathSession>): Promise<Mat
   }
 }
 
-export async function updateMathSession(id: string, data: Partial<MathSession>): Promise<MathSession | null> {
+export async function updateMathSession(id: string, data: Partial<MathSession> & { userId: string }): Promise<MathSession | null> {
   try {
+    if (!data.userId) throw new Error("userId is required to update math session");
     const res = await fetch(`/api/math/sessions/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -349,9 +477,10 @@ export async function updateMathSession(id: string, data: Partial<MathSession>):
   }
 }
 
-export async function deleteMathSession(id: string) {
+export async function deleteMathSession(id: string, userId: string) {
   try {
-    const res = await fetch(`/api/math/sessions/${id}`, { method: 'DELETE' });
+    if (!userId) return;
+    const res = await fetch(`/api/math/sessions/${id}?userId=${userId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to delete math session: ${res.status}`);
   } catch (err) {
     console.error("Failed to delete math session:", err);

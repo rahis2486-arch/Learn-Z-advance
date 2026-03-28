@@ -150,7 +150,13 @@ export default function LearnTubePage() {
   };
 
   const handleRecommend = async (courseId: string) => {
-    if (!user?.institutionId) return;
+    if (!user?.institutionId) {
+      console.warn("Cannot recommend: No institutionId found for user", user);
+      return;
+    }
+    
+    console.log(`[Recommend] ${recommendedByInst.includes(courseId) ? 'Removing' : 'Adding'} recommendation for course ${courseId}`);
+    
     try {
       const isRecommended = recommendedByInst.includes(courseId);
       const method = isRecommended ? "DELETE" : "POST";
@@ -174,14 +180,20 @@ export default function LearnTubePage() {
       });
 
       if (res.ok) {
+        console.log(`[Recommend] Successfully ${isRecommended ? 'removed' : 'added'} recommendation`);
         if (isRecommended) {
           setRecommendedByInst(prev => prev.filter(id => id !== courseId));
         } else {
           setRecommendedByInst(prev => [...prev, courseId]);
         }
+      } else {
+        const errorData = await res.json();
+        console.error("[Recommend] API error:", errorData);
+        alert(errorData.error || "Failed to update recommendation");
       }
     } catch (err) {
-      console.error("Failed to update recommendation:", err);
+      console.error("[Recommend] Network error:", err);
+      alert("Failed to update recommendation. Please check your connection.");
     }
   };
 

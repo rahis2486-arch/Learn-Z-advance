@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from "motion/react";
 import { Brain, Search, Trash2, Clock, Database, Sparkles, BookOpen, ListFilter } from "lucide-react";
 import { cn } from "../lib/utils";
 import { ConfirmModal } from "../components/ConfirmModal";
-import { getLongTermSummary } from "../services/geminiService";
+import { getLongTermSummary, listMemories, deleteMemory, clearAllMemories, updateLongTermSummary } from "../services/geminiService";
+import { useAuth } from "../contexts/AuthContext";
 import Markdown from "react-markdown";
 
 interface Memory {
@@ -14,6 +15,7 @@ interface Memory {
 }
 
 export default function MemoryPage() {
+  const { user } = useAuth();
   const [memories, setMemories] = useState<Memory[]>([]);
   const [summary, setSummary] = useState("");
   const [loading, setLoading] = useState(true);
@@ -22,17 +24,19 @@ export default function MemoryPage() {
   const [activeTab, setActiveTab] = useState<'short-term' | 'long-term'>('short-term');
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (user?.uid) {
+      fetchData();
+    }
+  }, [user?.uid]);
 
   const fetchData = async () => {
+    if (!user?.uid) return;
     setLoading(true);
     try {
-      const [memRes, sumData] = await Promise.all([
-        fetch('/api/memory/list'),
-        getLongTermSummary()
+      const [memData, sumData] = await Promise.all([
+        listMemories(undefined, user.uid),
+        getLongTermSummary(user.uid)
       ]);
-      const memData = await memRes.json();
       setMemories(Array.isArray(memData) ? memData : []);
       setSummary(sumData);
     } catch (err) {
@@ -48,12 +52,10 @@ export default function MemoryPage() {
   );
 
   const handleDelete = async () => {
-    if (deleteId === null) return;
+    if (deleteId === null || !user?.uid) return;
     try {
-      const res = await fetch(`/api/memory/${deleteId}`, { method: 'DELETE' });
-      if (res.ok) {
-        setMemories(prev => prev.filter(m => m._id !== deleteId));
-      }
+      await deleteMemory(deleteId, user.uid);
+      setMemories(prev => prev.filter(m => m._id !== deleteId));
     } catch (err) {
       console.error("Failed to delete memory:", err);
     }

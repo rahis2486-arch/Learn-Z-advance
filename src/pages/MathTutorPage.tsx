@@ -108,6 +108,7 @@ export default function MathTutorPage() {
 
       const finalMessages = [...updatedMessages, modelMsg];
       const finalSession = await updateMathSession(currentSession._id, {
+        userId: user.uid,
         messages: finalMessages,
         title: input.slice(0, 30) || currentSession.title
       });
@@ -135,8 +136,9 @@ export default function MathTutorPage() {
   };
 
   const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
+    if (!user?.uid) return;
     e.stopPropagation();
-    await deleteMathSession(id);
+    await deleteMathSession(id, user.uid);
     setSessions(sessions.filter(s => s._id !== id));
     if (currentSession?._id === id) setCurrentSession(null);
   };
