@@ -16,6 +16,18 @@ import {
   getDashboardStatsTool,
   getUserProgressTool,
   getLearningProfileTool,
+  openCourseTool,
+  openLessonTool,
+  goToNextLessonTool,
+  goToPreviousLessonTool,
+  searchCoursesTool,
+  recommendCoursesTool,
+  checkEnrollmentTool,
+  enrollCourseTool,
+  playVideoTool,
+  pauseVideoTool,
+  getVideoTimestampTool,
+  seekVideoTool,
   getDashboardStats,
   getUserProgress,
   getLongTermSummary,
@@ -25,7 +37,11 @@ import {
   storeChatMessage,
   clearChatHistory,
   getLearningProfile,
-  updateLearningInsights
+  updateLearningInsights,
+  searchCourses,
+  recommendCourses,
+  checkEnrollment,
+  enrollCourse
 } from "../services/geminiService";
 
 interface AssistantContextType {
@@ -44,6 +60,7 @@ interface AssistantContextType {
   learningProfile: any;
   isSidebarOpen: boolean;
   messages: ChatMessage[];
+  lastAction: { type: string; payload: any } | null;
   courseId: string | null;
   context: any;
   mathContext: any;
@@ -52,6 +69,7 @@ interface AssistantContextType {
   facingMode: 'user' | 'environment';
   stream: MediaStream | null;
   
+  dispatchAction: (type: string, payload: any) => void;
   setContext: (ctx: any) => void;
   setMathContext: (ctx: any) => void;
   setLocation: (loc: string) => void;
@@ -78,6 +96,15 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [isProcessing, setIsProcessing] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isMemoryAction, setIsMemoryAction] = useState(false);
+  const [isInterruptMode, setIsInterruptMode] = useState(true);
+  const [lastAction, setLastAction] = useState<{ type: string; payload: any } | null>(null);
+
+  const dispatchAction = (type: string, payload: any) => {
+    setLastAction({ type, payload });
+    // Reset after a short delay so the same action can be triggered again
+    setTimeout(() => setLastAction(null), 100);
+  };
+
   const [userVolume, setUserVolume] = useState(0);
   const [aiVolume, setAiVolume] = useState(0);
   const [longTermSummary, setLongTermSummary] = useState("");
@@ -186,6 +213,23 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setAiVolume(0);
     }
     return () => clearInterval(interval);
+  }, [isSpeaking]);
+
+  useEffect(() => {
+    if (isSpeaking && isInterruptMode && location.includes("/classroom")) {
+      dispatchAction("PAUSE_VIDEO", { auto: true });
+    }
+  }, [isSpeaking, isInterruptMode, location]);
+
+  useEffect(() => {
+    if (!isSpeaking) {
+      // Reset to interrupt mode after a short delay if Nova is silent
+      // This ensures that the next interaction (e.g. a question) will pause the video
+      const timer = setTimeout(() => {
+        setIsInterruptMode(true);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
   }, [isSpeaking]);
 
   const playMemorySound = useCallback(() => {
@@ -399,7 +443,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         
         sessionPromise.then((session: any) => {
           if (session && isLiveRef.current) {
-            session.sendRealtimeInput({ media: { data: base64Data, mimeType: `audio/pcm;rate=${sampleRate}` } });
+            session.sendRealtimeInput({ audio: { data: base64Data, mimeType: `audio/pcm;rate=${sampleRate}` } });
           }
         }).catch(() => {});
       };
@@ -526,6 +570,17 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       - Combine the data from these tools with your memory of their past interactions to provide a truly personalized experience.
       - If you can't find specific data, be honest and suggest where they can find it on the platform.
       
+      PLATFORM CONTROL & ACTIONS:
+      - You are not just an assistant; you are a platform control agent.
+      - Use "open_course" to take the student to a specific course.
+      - Use "open_lesson" to navigate to a specific lesson.
+      - Use "go_to_next_lesson" and "go_to_previous_lesson" to control the learning flow.
+      - Use "play_video", "pause_video", and "seek_video" to control the video player in the classroom.
+      - Use "search_courses" and "recommend_courses" to help students find new content.
+      - Use "enroll_course" to help them get started with a new course.
+      - Use "get_video_timestamp" to know exactly where the student is in the video.
+      - ALWAYS confirm your actions to the user (e.g., "Sure, I'm pausing the video for you."), EXCEPT for "play_video" which should be silent or minimal.
+      
       ADAPTIVE TUTORING STRATEGY:
       1. Use the User Learning Profile to adapt your tone and complexity.
       2. If a student is struggling with a "Weak Topic" (listed above), provide more detailed explanations and encouraging feedback.
@@ -548,24 +603,32 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       ${memoryContext}`;
 
       const sessionPromise = ai.live.connect({
-        model: "gemini-2.5-flash-native-audio-preview-12-2025",
+        model: "gemini-3.1-flash-live-preview",
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } } },
           inputAudioTranscription: {},
           outputAudioTranscription: {},
           systemInstruction,
-          generationConfig: {
-            maxOutputTokens: 2048,
-            temperature: 0.7,
-          },
           tools: [{ functionDeclarations: [
             storeMemoryTool, 
             searchMemoryTool, 
             navigateToPageTool,
             getDashboardStatsTool,
             getUserProgressTool,
-            getLearningProfileTool
+            getLearningProfileTool,
+            openCourseTool,
+            openLessonTool,
+            goToNextLessonTool,
+            goToPreviousLessonTool,
+            searchCoursesTool,
+            recommendCoursesTool,
+            checkEnrollmentTool,
+            enrollCourseTool,
+            playVideoTool,
+            pauseVideoTool,
+            getVideoTimestampTool,
+            seekVideoTool
           ] }]
         },
         callbacks: {
@@ -581,6 +644,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           },
           onmessage: async (message: LiveServerMessage) => {
             if (message.toolCall) {
+              setIsInterruptMode(false);
               setIsThinking(true);
               triggerMemoryEffect();
               for (const call of message.toolCall.functionCalls) {
@@ -684,6 +748,81 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                   sessionPromise.then(session => {
                     if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "navigate_to_page", id: call.id, response: { output: `Navigated to ${page}.` } }] });
                   });
+                } else if (call.name === "open_course") {
+                  const { courseId } = call.args as any;
+                  navigate(`/classroom/${courseId}`);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_course", id: call.id, response: { output: `Opened course ${courseId}.` } }] });
+                  });
+                } else if (call.name === "open_lesson") {
+                  const { courseId, lessonId } = call.args as any;
+                  navigate(`/classroom/${courseId}?lesson=${lessonId}`);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_lesson", id: call.id, response: { output: `Opened lesson ${lessonId} in course ${courseId}.` } }] });
+                  });
+                } else if (call.name === "go_to_next_lesson") {
+                  dispatchAction("NEXT_LESSON", {});
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "go_to_next_lesson", id: call.id, response: { output: `Navigating to next lesson.` } }] });
+                  });
+                } else if (call.name === "go_to_previous_lesson") {
+                  dispatchAction("PREVIOUS_LESSON", {});
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "go_to_previous_lesson", id: call.id, response: { output: `Navigating to previous lesson.` } }] });
+                  });
+                } else if (call.name === "search_courses") {
+                  const { query } = call.args as any;
+                  setIsProcessing(true);
+                  const courses = await searchCourses(query);
+                  setIsProcessing(false);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "search_courses", id: call.id, response: { courses } }] });
+                  });
+                } else if (call.name === "recommend_courses") {
+                  const { userId } = call.args as any;
+                  setIsProcessing(true);
+                  const recommendations = await recommendCourses(userId);
+                  setIsProcessing(false);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "recommend_courses", id: call.id, response: { recommendations } }] });
+                  });
+                } else if (call.name === "check_enrollment") {
+                  const { userId, courseId } = call.args as any;
+                  setIsProcessing(true);
+                  const enrolled = await checkEnrollment(userId, courseId);
+                  setIsProcessing(false);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "check_enrollment", id: call.id, response: { enrolled } }] });
+                  });
+                } else if (call.name === "enroll_course") {
+                  const { userId, courseId, source } = call.args as any;
+                  setIsProcessing(true);
+                  const enrollment = await enrollCourse(userId, courseId, source);
+                  setIsProcessing(false);
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "enroll_course", id: call.id, response: { enrollment } }] });
+                  });
+                } else if (call.name === "play_video") {
+                  dispatchAction("PLAY_VIDEO", {});
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "play_video", id: call.id, response: { output: `Video started. DO NOT speak or keep your response extremely silent/minimal.` } }] });
+                  });
+                } else if (call.name === "pause_video") {
+                  dispatchAction("PAUSE_VIDEO", {});
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "pause_video", id: call.id, response: { output: `Video paused.` } }] });
+                  });
+                } else if (call.name === "seek_video") {
+                  const { seconds } = call.args as any;
+                  dispatchAction("SEEK_VIDEO", { seconds });
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "seek_video", id: call.id, response: { output: `Video seeked to ${seconds}s.` } }] });
+                  });
+                } else if (call.name === "get_video_timestamp") {
+                  const timestamp = context?.videoTimestamp || 0;
+                  sessionPromise.then(session => {
+                    if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "get_video_timestamp", id: call.id, response: { timestamp } }] });
+                  });
                 }
               }
             }
@@ -724,6 +863,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             }
             if (message.serverContent?.interrupted) {
               console.log("Nova was interrupted by the system/user.");
+              setIsInterruptMode(true);
               stopAudioPlayback();
             }
           },
@@ -781,9 +921,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             : `[NEURAL LINK DISCONNECTED: Classroom context lost.]`;
             
           session.sendRealtimeInput({ 
-            parts: [{ 
-              text: contextMsg 
-            }] 
+            text: contextMsg 
           });
           
           // Trigger visual feedback for context sync
@@ -799,9 +937,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       sessionRef.current.then((session: any) => {
         if (session && isLiveRef.current) {
           session.sendRealtimeInput({ 
-            parts: [{ 
-              text: `[SYSTEM UPDATE: The student has navigated to the "${location}" page.]` 
-            }] 
+            text: `[SYSTEM UPDATE: The student has navigated to the "${location}" page.]` 
           });
         }
       }).catch(() => {});
@@ -811,7 +947,8 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   return (
     <AssistantContext.Provider value={{
       isLive, isCameraOn, isMicOn, isSpeaking, isThinking, isProcessing, isConnecting, isMemoryAction,
-      userVolume, aiVolume, longTermSummary, courseSummary, learningProfile, isSidebarOpen, messages, courseId, context, mathContext, location, theme,
+      userVolume, aiVolume, longTermSummary, courseSummary, learningProfile, isSidebarOpen, messages, 
+      lastAction, dispatchAction, courseId, context, mathContext, location, theme,
       facingMode, stream, setContext, setMathContext, setLocation, setTheme, toggleSidebar, toggleCamera, switchCamera, toggleMic, startLiveSession, cleanupSession, setSidebarOpen
     }}>
       {children}

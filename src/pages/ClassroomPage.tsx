@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -90,8 +90,225 @@ export default function ClassroomPage() {
   const [timeLeft, setTimeLeft] = useState(20);
   const [quizResults, setQuizResults] = useState<QuizResult | null>(null);
   const [isSubmittingQuiz, setIsSubmittingQuiz] = useState(false);
+  const [isApiReady, setIsApiReady] = useState(false);
+  const playerRef = useRef<any>(null);
+  const playerElementRef = useRef<HTMLDivElement>(null);
 
-  const { setContext, toggleSidebar, isSidebarOpen, theme } = useAssistant();
+  const { setContext, toggleSidebar, isSidebarOpen, theme, lastAction } = useAssistant();
+
+  // YouTube API initialization
+  useEffect(() => {
+    const checkApi = () => {
+      if ((window as any).YT && (window as any).YT.Player) {
+        console.log("[Classroom] YouTube API already ready");
+        setIsApiReady(true);
+        return true;
+      }
+      return false;
+    };
+
+    if (!checkApi()) {
+      if (!(window as any).YT) {
+        console.log("[Classroom] Loading YouTube IFrame API script...");
+        const tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        const firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+      }
+
+      const previousOnReady = (window as any).onYouTubeIframeAPIReady;
+      (window as any).onYouTubeIframeAPIReady = () => {
+        if (previousOnReady) previousOnReady();
+        console.log("[Classroom] YouTube IFrame API Ready event fired");
+        setIsApiReady(true);
+      };
+
+      // Fallback check in case the event doesn't fire but API loads
+      const interval = setInterval(() => {
+        if (checkApi()) clearInterval(interval);
+      }, 500);
+      return () => clearInterval(interval);
+    }
+  }, []);
+
+  const extractVideoId = (url: string) => {
+    if (!url) return null;
+    console.log("[Classroom] Extracting ID from URL:", url);
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    const id = (match && match[2].length === 11) ? match[2] : (url.length === 11 ? url : null);
+    console.log("[Classroom] Extracted ID:", id);
+    return id;
+  };
+
+  const initPlayer = useCallback((videoId: string) => {
+    if (!playerElementRef.current) {
+      console.warn("[Classroom] YouTube player element ref not found yet");
+      return;
+    }
+
+    try {
+      // If player already exists, destroy it first
+      if (playerRef.current && typeof playerRef.current.destroy === 'function') {
+        console.log("[Classroom] Destroying existing player before re-init");
+        playerRef.current.destroy();
+        playerRef.current = null;
+      }
+
+      console.log("[Classroom] Creating new YT.Player instance for:", videoId);
+      new (window as any).YT.Player(playerElementRef.current, {
+        height: '100%',
+        width: '100%',
+        videoId: videoId,
+        playerVars: {
+          'autoplay': 0,
+          'controls': 1,
+          'modestbranding': 1,
+          'rel': 0,
+          'fs': 1,
+          'origin': window.location.origin
+        },
+        events: {
+          'onReady': (event: any) => {
+            console.log("[Classroom] Player Ready");
+            playerRef.current = event.target;
+          },
+          'onError': (event: any) => {
+            console.error("[Classroom] YouTube Player Error:", event.data);
+          }
+        }
+      });
+    } catch (err) {
+      console.error("[Classroom] Error initializing YouTube player:", err);
+    }
+  }, []);
+
+  const onPlayerElementRef = useCallback((node: HTMLDivElement | null) => {
+    if (node) {
+      console.log("[Classroom] Player element ref mounted");
+      playerElementRef.current = node;
+      const videoId = currentLesson ? extractVideoId(currentLesson.youtubeUrl) : null;
+      if (videoId && isApiReady) {
+        initPlayer(videoId);
+      }
+    } else {
+      console.log("[Classroom] Player element ref unmounted");
+      playerElementRef.current = null;
+      if (playerRef.current && typeof playerRef.current.destroy === 'function') {
+        playerRef.current.destroy();
+        playerRef.current = null;
+      }
+    }
+  }, [currentLesson, isApiReady, initPlayer]);
+
+  useEffect(() => {
+    if (currentLesson) {
+      console.log("[Classroom] Current Lesson Loaded:", currentLesson.title, "URL:", currentLesson.youtubeUrl);
+    }
+    if (currentLesson && isApiReady) {
+      const videoId = extractVideoId(currentLesson.youtubeUrl);
+      if (videoId) {
+        if (playerRef.current && typeof playerRef.current.loadVideoById === 'function') {
+          try {
+            console.log("[Classroom] Loading video by ID:", videoId);
+            playerRef.current.loadVideoById(videoId);
+          } catch (e) {
+            console.error("[Classroom] Failed to load video by ID, re-initializing player", e);
+            initPlayer(videoId);
+          }
+        } else {
+          // If player doesn't exist, the callback ref will handle initialization
+          console.log("[Classroom] Player not ready, waiting for ref or callback...");
+        }
+      } else {
+        console.warn("[Classroom] No valid video ID found for URL:", currentLesson.youtubeUrl);
+      }
+    }
+  }, [currentLesson, isApiReady, initPlayer]);
+
+  const renderVideoPlayer = useMemo(() => {
+    const videoId = currentLesson ? extractVideoId(currentLesson.youtubeUrl) : null;
+    
+    // Do not render player until videoId is available
+    if (!videoId) {
+      return (
+        <div className="aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl border border-theme-border group relative flex items-center justify-center">
+          <Play size={64} className="text-theme-text/10" />
+        </div>
+      );
+    }
+
+    return (
+      <div className="aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl border border-theme-border group relative">
+        <div key={currentLesson?._id} className="w-full h-full">
+          <div ref={onPlayerElementRef} className="w-full h-full" />
+        </div>
+      </div>
+    );
+  }, [currentLesson, isApiReady, onPlayerElementRef]);
+
+  // AI Action Listener
+  useEffect(() => {
+    if (!lastAction) return;
+
+    console.log("[Classroom] AI Action received:", lastAction);
+
+    switch (lastAction.type) {
+      case "PLAY_VIDEO":
+        if (playerRef.current && typeof playerRef.current.playVideo === 'function') {
+          playerRef.current.playVideo();
+        } else {
+          console.warn("[Classroom] Attempted to play video before player was ready.");
+        }
+        break;
+      case "PAUSE_VIDEO":
+        if (playerRef.current && typeof playerRef.current.pauseVideo === 'function') {
+          playerRef.current.pauseVideo();
+        } else {
+          console.warn("[Classroom] Attempted to pause video before player was ready.");
+        }
+        break;
+      case "SEEK_VIDEO":
+        if (playerRef.current && typeof playerRef.current.seekTo === 'function') {
+          playerRef.current.seekTo(lastAction.payload.seconds, true);
+        } else {
+          console.warn("[Classroom] Attempted to seek video before player was ready.");
+        }
+        break;
+      case "NEXT_LESSON":
+        handleNextLesson();
+        break;
+      case "PREVIOUS_LESSON":
+        handlePreviousLesson();
+        break;
+    }
+  }, [lastAction]);
+
+  const handleNextLesson = () => {
+    if (!currentLesson || lessons.length === 0) return;
+    const currentIndex = lessons.findIndex(l => l._id === currentLesson._id);
+    if (currentIndex < lessons.length - 1) {
+      setCurrentLesson(lessons[currentIndex + 1]);
+    }
+  };
+
+  const handlePreviousLesson = () => {
+    if (!currentLesson || lessons.length === 0) return;
+    const currentIndex = lessons.findIndex(l => l._id === currentLesson._id);
+    if (currentIndex > 0) {
+      setCurrentLesson(lessons[currentIndex - 1]);
+    }
+  };
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (playerRef.current && playerRef.current.getCurrentTime) {
+        const time = playerRef.current.getCurrentTime();
+        setContext((prev: any) => ({ ...prev, videoTimestamp: time }));
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [setContext]);
 
   useEffect(() => {
     if (course && currentLesson) {
@@ -892,20 +1109,7 @@ export default function ClassroomPage() {
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-5xl mx-auto p-6 lg:p-10 space-y-8">
             {/* Video Player */}
-            <div className="aspect-video bg-black rounded-3xl overflow-hidden shadow-2xl border border-theme-border group relative">
-              {currentLesson ? (
-                <iframe
-                  src={getYoutubeEmbedUrl(currentLesson.youtubeUrl) || ""}
-                  className="w-full h-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <Play size={64} className="text-theme-text/10" />
-                </div>
-              )}
-            </div>
+            {renderVideoPlayer}
 
             {/* Tabs & Content */}
             <div className="space-y-6">

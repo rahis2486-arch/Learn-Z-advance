@@ -404,6 +404,222 @@ export async function getUserProgress(userId: string) {
   }
 }
 
+export const openCourseTool: FunctionDeclaration = {
+  name: "open_course",
+  description: "Open a specific course by its ID. This will take the user to the classroom for that course.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      courseId: {
+        type: Type.STRING,
+        description: "The unique ID of the course to open."
+      }
+    },
+    required: ["courseId"]
+  }
+};
+
+export const openLessonTool: FunctionDeclaration = {
+  name: "open_lesson",
+  description: "Open a specific lesson within a course. This will navigate the user to that lesson in the classroom.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      courseId: {
+        type: Type.STRING,
+        description: "The unique ID of the course."
+      },
+      lessonId: {
+        type: Type.STRING,
+        description: "The unique ID of the lesson to open."
+      }
+    },
+    required: ["courseId", "lessonId"]
+  }
+};
+
+export const goToNextLessonTool: FunctionDeclaration = {
+  name: "go_to_next_lesson",
+  description: "Navigate to the next lesson in the current course sequence.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {}
+  }
+};
+
+export const goToPreviousLessonTool: FunctionDeclaration = {
+  name: "go_to_previous_lesson",
+  description: "Navigate to the previous lesson in the current course sequence.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {}
+  }
+};
+
+export const searchCoursesTool: FunctionDeclaration = {
+  name: "search_courses",
+  description: "Search for courses on the platform using a query string. Returns a list of matching courses.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: {
+        type: Type.STRING,
+        description: "The search query (e.g., 'React', 'Python', 'Web Development')."
+      }
+    },
+    required: ["query"]
+  }
+};
+
+export const recommendCoursesTool: FunctionDeclaration = {
+  name: "recommend_courses",
+  description: "Get personalized course recommendations for the user based on their learning profile and interests.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      userId: {
+        type: Type.STRING,
+        description: "The unique ID of the user."
+      }
+    },
+    required: ["userId"]
+  }
+};
+
+export const checkEnrollmentTool: FunctionDeclaration = {
+  name: "check_enrollment",
+  description: "Check if the user is already enrolled in a specific course.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      userId: {
+        type: Type.STRING,
+        description: "The unique ID of the user."
+      },
+      courseId: {
+        type: Type.STRING,
+        description: "The unique ID of the course to check."
+      }
+    },
+    required: ["userId", "courseId"]
+  }
+};
+
+export const enrollCourseTool: FunctionDeclaration = {
+  name: "enroll_course",
+  description: "Enroll the user in a specific course. This adds the course to their classroom.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      userId: {
+        type: Type.STRING,
+        description: "The unique ID of the user."
+      },
+      courseId: {
+        type: Type.STRING,
+        description: "The unique ID of the course to enroll in."
+      },
+      source: {
+        type: Type.STRING,
+        enum: ["personal", "institution"],
+        description: "The enrollment source (default is 'personal')."
+      }
+    },
+    required: ["userId", "courseId"]
+  }
+};
+
+export const playVideoTool: FunctionDeclaration = {
+  name: "play_video",
+  description: "Start or resume the video playback in the classroom.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {}
+  }
+};
+
+export const pauseVideoTool: FunctionDeclaration = {
+  name: "pause_video",
+  description: "Pause the video playback in the classroom.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {}
+  }
+};
+
+export const getVideoTimestampTool: FunctionDeclaration = {
+  name: "get_video_timestamp",
+  description: "Get the current playback time of the video in seconds.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {}
+  }
+};
+
+export const seekVideoTool: FunctionDeclaration = {
+  name: "seek_video",
+  description: "Seek the video to a specific timestamp in seconds.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      seconds: {
+        type: Type.NUMBER,
+        description: "The time in seconds to seek to."
+      }
+    },
+    required: ["seconds"]
+  }
+};
+
+export async function searchCourses(query: string) {
+  try {
+    const res = await fetch(`/api/courses?search=${encodeURIComponent(query)}`);
+    if (!res.ok) throw new Error(`Failed to search courses: ${res.status}`);
+    return res.json();
+  } catch (err) {
+    console.error("Failed to search courses:", err);
+    return [];
+  }
+}
+
+export async function recommendCourses(userId: string) {
+  try {
+    const res = await fetch(`/api/courses?recommend=true&userId=${userId}`);
+    if (!res.ok) throw new Error(`Failed to get recommendations: ${res.status}`);
+    return res.json();
+  } catch (err) {
+    console.error("Failed to get recommendations:", err);
+    return [];
+  }
+}
+
+export async function checkEnrollment(userId: string, courseId: string) {
+  try {
+    const res = await fetch(`/api/progress/${userId}`);
+    if (!res.ok) throw new Error(`Failed to check enrollment: ${res.status}`);
+    const progress = await res.json();
+    return progress.some((p: any) => p.courseId?._id === courseId);
+  } catch (err) {
+    console.error("Failed to check enrollment:", err);
+    return false;
+  }
+}
+
+export async function enrollCourse(userId: string, courseId: string, source: string = 'personal') {
+  try {
+    const res = await fetch("/api/enroll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, courseId, enrollmentSource: source }),
+    });
+    if (!res.ok) throw new Error(`Failed to enroll: ${res.status}`);
+    return res.json();
+  } catch (err) {
+    console.error("Failed to enroll:", err);
+    return null;
+  }
+}
+
 export async function updateLearningInsights(userId: string, insights: string) {
   try {
     if (!userId) return;
