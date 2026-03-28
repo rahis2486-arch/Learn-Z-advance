@@ -622,6 +622,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       - Use "get_user_progress" for detailed progress across all their courses.
       - Use "get_learning_profile" to understand their long-term learning patterns, interests, and AI-identified weak areas.
       - When a student asks about their progress, grades, or "how they are doing", ALWAYS use these tools to get the latest data before responding.
+      - NEVER assume or guess performance data. If you cannot find specific data using the tools, respond: "I couldn't find that information yet."
       - Combine the data from these tools with your memory of their past interactions to provide a truly personalized experience.
       - If you can't find specific data, be honest and suggest where they can find it on the platform.
       
@@ -714,7 +715,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     setIsProcessing(false);
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "store_memory", id: call.id, response: { output: `Fact stored.` } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (store_memory):", err));
                   } else if (call.name === "search_memory") {
                     const { query } = call.args as any;
                     setIsProcessing(true);
@@ -743,7 +744,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                           } 
                         }] 
                       });
-                    });
+                    }).catch(err => console.error("Tool response error (search_memory):", err));
                   } else if (call.name === "get_dashboard_stats") {
                     const { userId } = call.args as any;
                     setIsProcessing(true);
@@ -757,7 +758,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                           response: { stats } 
                         }] 
                       });
-                    });
+                    }).catch(err => console.error("Tool response error (get_dashboard_stats):", err));
                   } else if (call.name === "get_user_progress") {
                     const { userId } = call.args as any;
                     setIsProcessing(true);
@@ -771,7 +772,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                           response: { progress } 
                         }] 
                       });
-                    });
+                    }).catch(err => console.error("Tool response error (get_user_progress):", err));
                   } else if (call.name === "get_learning_profile") {
                     const { userId } = call.args as any;
                     setIsProcessing(true);
@@ -785,7 +786,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                           response: { profile } 
                         }] 
                       });
-                    });
+                    }).catch(err => console.error("Tool response error (get_learning_profile):", err));
                   } else if (call.name === "navigate_to_page") {
                     const { page, courseId: navCourseId } = call.args as any;
                     let path = "/";
@@ -803,7 +804,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     navigate(path);
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "navigate_to_page", id: call.id, response: { output: `Navigated to ${page}.` } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (navigate_to_page):", err));
                   } else if (call.name === "open_course") {
                     const { courseId: inputCourseId } = call.args as any;
                     let targetId = inputCourseId;
@@ -818,11 +819,11 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                       navigate(`/classroom/${targetId}`);
                       sessionPromise.then(session => {
                         if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_course", id: call.id, response: { output: `Opened course ${targetId}.` } }] });
-                      });
+                      }).catch(err => console.error("Tool response error (open_course):", err));
                     } else {
                       sessionPromise.then(session => {
                         if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_course", id: call.id, response: { error: `I couldn't find that course.` } }] });
-                      });
+                      }).catch(err => console.error("Tool response error (open_course - not found):", err));
                     }
                   } else if (call.name === "open_lesson") {
                     const { courseId: inputCourseId, lessonId } = call.args as any;
@@ -837,22 +838,22 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                       navigate(`/classroom/${targetId}?lesson=${lessonId}`);
                       sessionPromise.then(session => {
                         if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_lesson", id: call.id, response: { output: `Opened lesson ${lessonId} in course ${targetId}.` } }] });
-                      });
+                      }).catch(err => console.error("Tool response error (open_lesson):", err));
                     } else {
                       sessionPromise.then(session => {
                         if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "open_lesson", id: call.id, response: { error: `I couldn't find that course.` } }] });
-                      });
+                      }).catch(err => console.error("Tool response error (open_lesson - not found):", err));
                     }
                   } else if (call.name === "go_to_next_lesson") {
                     dispatchAction("NEXT_LESSON", {});
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "go_to_next_lesson", id: call.id, response: { output: `Navigating to next lesson.` } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (go_to_next_lesson):", err));
                   } else if (call.name === "go_to_previous_lesson") {
                     dispatchAction("PREVIOUS_LESSON", {});
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "go_to_previous_lesson", id: call.id, response: { output: `Navigating to previous lesson.` } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (go_to_previous_lesson):", err));
                   } else if (call.name === "search_courses") {
                     const { query } = call.args as any;
                     setIsProcessing(true);
@@ -862,7 +863,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     setIsProcessing(false);
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "search_courses", id: call.id, response: { courses } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (search_courses):", err));
                   } else if (call.name === "recommend_courses") {
                     const { userId } = call.args as any;
                     setIsProcessing(true);
@@ -870,7 +871,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     setIsProcessing(false);
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "recommend_courses", id: call.id, response: { recommendations } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (recommend_courses):", err));
                   } else if (call.name === "check_enrollment") {
                     const { userId, courseId } = call.args as any;
                     setIsProcessing(true);
@@ -878,7 +879,7 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     setIsProcessing(false);
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "check_enrollment", id: call.id, response: { enrolled } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (check_enrollment):", err));
                   } else if (call.name === "enroll_course") {
                     const { userId, courseId, source } = call.args as any;
                     setIsProcessing(true);
@@ -886,28 +887,28 @@ export const AssistantProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     setIsProcessing(false);
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "enroll_course", id: call.id, response: { enrollment } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (enroll_course):", err));
                   } else if (call.name === "play_video") {
                     dispatchAction("PLAY_VIDEO", {});
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "play_video", id: call.id, response: { output: `Video started. DO NOT speak or keep your response extremely silent/minimal.` } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (play_video):", err));
                   } else if (call.name === "pause_video") {
                     dispatchAction("PAUSE_VIDEO", {});
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "pause_video", id: call.id, response: { output: `Video paused.` } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (pause_video):", err));
                   } else if (call.name === "seek_video") {
                     const { seconds } = call.args as any;
                     dispatchAction("SEEK_VIDEO", { seconds });
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "seek_video", id: call.id, response: { output: `Video seeked to ${seconds}s.` } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (seek_video):", err));
                   } else if (call.name === "get_video_timestamp") {
                     const timestamp = context?.videoTimestamp || 0;
                     sessionPromise.then(session => {
                       if (session) (session as any).sendToolResponse({ functionResponses: [{ name: "get_video_timestamp", id: call.id, response: { timestamp } }] });
-                    });
+                    }).catch(err => console.error("Tool response error (get_video_timestamp):", err));
                   }
                 } catch (err) {
                   console.error(`Nova Tool Execution Error (${call.name}):`, err);

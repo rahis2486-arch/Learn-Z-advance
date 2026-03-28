@@ -461,6 +461,151 @@ async function startServer() {
     }
   });
 
+  // Institution Admin Middleware
+  const isInstitutionAdmin = async (req: any, res: any, next: any) => {
+    try {
+      const uid = req.headers['x-user-uid'];
+      if (!uid) return res.status(401).json({ error: "Unauthorized" });
+      
+      const user = await User.findOne({ uid });
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const institutionId = req.params.institutionId || req.body.institutionId;
+
+      if (user.role === 'admin') return next(); // Global admin can do anything
+
+      if (user.role !== 'institution_admin' || user.institutionId?.toString() !== institutionId) {
+        return res.status(403).json({ error: "Forbidden: Institution Admin access required for this institution" });
+      }
+      next();
+    } catch (err) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  };
+
+  // Institution Admin Endpoints
+  app.get("/api/institution/details/:institutionId", isInstitutionAdmin, async (req, res) => {
+    try {
+      const inst = await Institution.findById(req.params.institutionId);
+      if (!inst) return res.status(404).json({ error: "Institution not found" });
+      res.json(inst);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch institution details" });
+    }
+  });
+
+  app.put("/api/institution/emails/:institutionId", isInstitutionAdmin, async (req, res) => {
+    try {
+      const { emails } = req.body;
+      const inst = await Institution.findByIdAndUpdate(
+        req.params.institutionId,
+        { allowedEmails: emails },
+        { new: true }
+      );
+      res.json(inst);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update permitted emails" });
+    }
+  });
+
+  app.get("/api/institution/students/:institutionId", isInstitutionAdmin, async (req, res) => {
+    try {
+      const students = await User.find({ 
+        institutionId: req.params.institutionId,
+        role: { $in: ['student', 'institution_student'] }
+      }).sort({ displayName: 1 });
+      
+      // Get enrollment info for these students
+      const studentIds = students.map(s => s.uid);
+      const enrollments = await UserProgress.find({ 
+        userId: { $in: studentIds },
+        enrollmentSource: 'institution'
+      }).populate('courseId');
+
+      const studentsWithEnrollments = students.map(s => {
+        const studentEnrollments = enrollments.filter(e => e.userId === s.uid);
+        return {
+          ...s.toObject(),
+          enrollments: studentEnrollments
+        };
+      });
+
+      res.json(studentsWithEnrollments);
+    } catch (err) {
+      console.error("Failed to fetch institution students:", err);
+      res.status(500).json({ error: "Failed to fetch students" });
+    }
+  });
+
+  app.get("/api/institution/stats/:institutionId", isInstitutionAdmin, async (req, res) => {
+    try {
+      const institutionId = req.params.institutionId;
+      
+      const totalStudents = await User.countDocuments({ 
+        institutionId,
+        role: { $in: ['student', 'institution_student'] }
+      });
+
+      const enrollments = await UserProgress.find({ 
+        userId: { $in: await User.find({ institutionId }).distinct('uid') },
+        enrollmentSource: 'institution'
+      });
+
+      const totalEnrollments = enrollments.length;
+      const completions = enrollments.filter(e => e.isCompleted).length;
+      const completionRate = totalEnrollments > 0 ? (completions / totalEnrollments) * 100 : 0;
+
+      // Calculate average score across all quizzes
+      let totalScore = 0;
+      let totalQuizzes = 0;
+      enrollments.forEach(e => {
+        e.lessonQuizzes.forEach(q => {
+          totalScore += (q.score / q.totalQuestions) * 100;
+          totalQuizzes++;
+        });
+      });
+      const averageScore = totalQuizzes > 0 ? totalScore / totalQuizzes : 0;
+
+      // Stats by course
+      const courseStats = await UserProgress.aggregate([
+        { 
+          $match: { 
+            userId: { $in: await User.find({ institutionId }).distinct('uid') },
+            enrollmentSource: 'institution'
+          } 
+        },
+        {
+          $group: {
+            _id: "$courseId",
+            enrollmentCount: { $sum: 1 },
+            completionCount: { $sum: { $cond: ["$isCompleted", 1, 0] } }
+          }
+        },
+        {
+          $lookup: {
+            from: "courses",
+            localField: "_id",
+            foreignField: "_id",
+            as: "courseInfo"
+          }
+        },
+        { $unwind: "$courseInfo" }
+      ]);
+
+      res.json({
+        totalStudents,
+        totalEnrollments,
+        completions,
+        completionRate,
+        averageScore,
+        courseStats
+      });
+    } catch (err) {
+      console.error("Failed to fetch institution stats:", err);
+      res.status(500).json({ error: "Failed to fetch stats" });
+    }
+  });
+
   // User Profile Update
   app.put("/api/users/:uid", async (req, res) => {
     try {
@@ -784,6 +929,24 @@ async function startServer() {
         completedCourses: progress.filter((p: any) => p.isCompleted).length,
         inProgressCourses: progress.filter((p: any) => !p.isCompleted).length,
         
+        // Retention Metrics
+        retentionMetrics: progress.map((p: any) => {
+          const avgVideoCompletion = p.videoProgress.length > 0 
+            ? p.videoProgress.reduce((acc: number, v: any) => acc + v.percentage, 0) / p.videoProgress.length 
+            : 0;
+          const totalPossible = p.lessonQuizzes.reduce((acc: number, q: any) => acc + q.totalQuestions, 0);
+          const totalScored = p.lessonQuizzes.reduce((acc: number, q: any) => acc + q.score, 0);
+          const avgQuizScore = totalPossible > 0 ? (totalScored / totalPossible) * 100 : 0;
+          
+          return {
+            courseId: p.courseId?._id || p._id,
+            title: p.courseId?.title || p.courseSnapshot?.title || "Unknown",
+            retentionRate: (avgVideoCompletion * 0.4) + (avgQuizScore * 0.6),
+            engagementScore: avgVideoCompletion,
+            quizPerformance: avgQuizScore
+          };
+        }),
+
         // Progress over time (last 7 days of activity)
         activityHistory: await Promise.all(progress.flatMap((p: any) => 
           p.lessonQuizzes.flatMap((q: any) => 
@@ -806,7 +969,9 @@ async function startServer() {
             title: p.courseId?.title || p.courseSnapshot?.title || "Unknown Course",
             averageScore: totalPossible > 0 ? (totalScored / totalPossible) * 100 : 0,
             completedLessons: p.completedLessons.length,
-            totalQuizzes: p.lessonQuizzes.length
+            totalQuizzes: p.lessonQuizzes.length,
+            isCompleted: p.isCompleted,
+            finalTest: p.finalTest
           };
         }),
 
@@ -1060,6 +1225,44 @@ async function startServer() {
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to update insights" });
+    }
+  });
+
+  app.post("/api/progress/:uid/:courseId/video/:lessonId", async (req, res) => {
+    try {
+      const { uid, courseId, lessonId } = req.params;
+      const { watchedTime, totalDuration, percentage, enrollmentSource } = req.body;
+      
+      let progress;
+      if (enrollmentSource) {
+        progress = await (UserProgress as any).findOne({ userId: uid, courseId, enrollmentSource });
+      } else {
+        const enrollments = await (UserProgress as any).find({ userId: uid, courseId });
+        if (enrollments.length === 1) progress = enrollments[0];
+        else if (enrollments.length > 1) return res.status(400).json({ error: "Multiple enrollments found. Please specify enrollmentSource." });
+      }
+
+      if (!progress) return res.status(404).json({ error: "Enrollment not found" });
+
+      let video = progress.videoProgress.find((v: any) => v.lessonId === lessonId);
+      if (video) {
+        video.watchedTime = watchedTime;
+        video.totalDuration = totalDuration;
+        video.percentage = percentage;
+        video.lastUpdated = new Date();
+      } else {
+        progress.videoProgress.push({
+          lessonId,
+          watchedTime,
+          totalDuration,
+          percentage,
+          lastUpdated: new Date()
+        });
+      }
+      await progress.save();
+      res.json(progress);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to save video progress" });
     }
   });
 

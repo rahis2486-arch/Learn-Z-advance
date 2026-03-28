@@ -26,6 +26,7 @@ import SubscriptionPage from "./pages/SubscriptionPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import ProfilePage from "./pages/ProfilePage";
 import DashboardPage from "./pages/DashboardPage";
+import InstitutionAdminPage from "./pages/InstitutionAdminPage";
 
 import { AssistantProvider, useAssistant } from "./contexts/AssistantContext";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
@@ -33,7 +34,7 @@ import NovaAssistantUI from "./components/NovaAssistantUI";
 import { LogIn, LogOut, ShieldAlert } from "lucide-react";
 import LoginModal from "./components/LoginModal";
 
-function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode, adminOnly?: boolean }) {
+function ProtectedRoute({ children, adminOnly = false, institutionAdminOnly = false }: { children: React.ReactNode, adminOnly?: boolean, institutionAdminOnly?: boolean }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
@@ -57,6 +58,10 @@ function ProtectedRoute({ children, adminOnly = false }: { children: React.React
   }
 
   if (adminOnly && user.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+
+  if (institutionAdminOnly && user.role !== 'institution_admin' && user.role !== 'admin') {
     return <Navigate to="/" replace />;
   }
 
@@ -107,9 +112,11 @@ function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (v: boolea
     { icon: Calculator, label: "Math Tutor", path: "/math-tutor" },
     { icon: Bot, label: "Nova Assistant", path: "/assistant" },
     { icon: Brain, label: "Neural Core", path: "/memory" },
+    { icon: ShieldCheck, label: "Institution Admin", path: "/institution-admin", institutionAdminOnly: true },
     { icon: ShieldCheck, label: "Admin Panel", path: "/admin", adminOnly: true },
   ].filter(item => {
     if (item.adminOnly && user?.role !== 'admin') return false;
+    if ((item as any).institutionAdminOnly && user?.role !== 'institution_admin' && user?.role !== 'admin') return false;
     if ((item as any).institutionalOnly && user?.loginType !== 'institutional') return false;
     return true;
   });
@@ -455,6 +462,11 @@ function AppContent({ isSidebarOpen, setIsOpen }: { isSidebarOpen: boolean, setI
             <Route path="/profile" element={
               <ProtectedRoute>
                 <ProfilePage />
+              </ProtectedRoute>
+            } />
+            <Route path="/institution-admin" element={
+              <ProtectedRoute institutionAdminOnly>
+                <InstitutionAdminPage />
               </ProtectedRoute>
             } />
           </Routes>

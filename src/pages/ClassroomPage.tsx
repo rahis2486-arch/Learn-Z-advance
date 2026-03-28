@@ -247,6 +247,37 @@ export default function ClassroomPage() {
     );
   }, [currentLesson, isApiReady, onPlayerElementRef]);
 
+  // Video Progress Tracking
+  useEffect(() => {
+    let interval: any;
+    if (playerRef.current && currentLesson && user && courseId) {
+      interval = setInterval(async () => {
+        try {
+          if (typeof playerRef.current.getCurrentTime !== 'function') return;
+          const currentTime = playerRef.current.getCurrentTime();
+          const duration = playerRef.current.getDuration();
+          if (duration > 0) {
+            const percentage = (currentTime / duration) * 100;
+            
+            await fetch(`/api/progress/${user.uid}/${courseId}/video/${currentLesson._id}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                watchedTime: currentTime,
+                totalDuration: duration,
+                percentage,
+                enrollmentSource: source
+              })
+            });
+          }
+        } catch (err) {
+          // Silent error for background progress saving
+        }
+      }, 15000); // Every 15 seconds
+    }
+    return () => clearInterval(interval);
+  }, [playerRef.current, currentLesson, user, courseId, source]);
+
   // AI Action Listener
   useEffect(() => {
     if (!lastAction) return;
@@ -692,7 +723,21 @@ export default function ClassroomPage() {
   }, [isQuizOpen, isGeneratingQuiz, quizResults, timeLeft, currentQuestionIndex, quizQuestions.length, userAnswers]);
 
   const handleMarkCourseComplete = async () => {
-    if (!user || !courseId) return;
+    if (!user || !courseId || !userProgress) return;
+    
+    const allLessonsCompleted = lessons.every(l => userProgress.completedLessons?.includes(l._id));
+    const finalTestCompleted = userProgress.finalTest?.completed;
+
+    if (!allLessonsCompleted) {
+      alert("Please complete all lessons before finishing the course.");
+      return;
+    }
+
+    if (!finalTestCompleted) {
+      alert("Please complete the final test before finishing the course.");
+      return;
+    }
+
     setIsRatingModalOpen(true);
   };
 

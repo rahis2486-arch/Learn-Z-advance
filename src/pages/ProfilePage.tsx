@@ -22,13 +22,35 @@ export default function ProfilePage() {
   const [usernameSuggestion, setUsernameSuggestion] = useState<string | null>(null);
   const [userProgress, setUserProgress] = useState<any[]>([]);
   const [loadingProgress, setLoadingProgress] = useState(true);
+  const [institution, setInstitution] = useState<any>(null);
+  const [loadingInstitution, setLoadingInstitution] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (user) {
       fetchUserProgress();
+      if (user.institutionId) {
+        fetchInstitutionDetails();
+      }
     }
   }, [user]);
+
+  const fetchInstitutionDetails = async () => {
+    try {
+      setLoadingInstitution(true);
+      const res = await fetch(`/api/institution/details/${user?.institutionId}`, {
+        headers: { 'x-user-uid': user?.uid || '' }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInstitution(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch institution details:", err);
+    } finally {
+      setLoadingInstitution(false);
+    }
+  };
 
   const fetchUserProgress = async () => {
     try {
@@ -271,6 +293,41 @@ export default function ProfilePage() {
           <InfoCard icon={Shield} label="User ID" value={user.uid} className="md:col-span-2" />
         </div>
       </section>
+
+      {/* Institution Information Section */}
+      {user.loginType === 'institutional' && (
+        <section className="space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-theme-border" />
+            <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-theme-text/40">Institution Information</h2>
+            <div className="h-px flex-1 bg-theme-border" />
+          </div>
+
+          <div className="p-6 rounded-3xl bg-theme-card border border-theme-border flex flex-col md:flex-row items-center gap-8">
+            <div className="w-24 h-24 rounded-2xl bg-theme-bg border border-theme-border p-2 flex items-center justify-center shrink-0">
+              {institution?.logoUrl ? (
+                <img src={institution.logoUrl} alt={institution.name} className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+              ) : (
+                <Shield size={40} className="text-theme-text/20" />
+              )}
+            </div>
+            <div className="flex-1 text-center md:text-left space-y-4">
+              <div className="space-y-1">
+                <h3 className="text-xl font-black text-theme-text">{institution?.name || 'Loading institution...'}</h3>
+                <p className="text-sm text-theme-text/60 font-medium">{institution?.location || 'Location not specified'}</p>
+              </div>
+              <div className="flex flex-wrap justify-center md:justify-start gap-3">
+                <div className="px-4 py-1.5 rounded-full bg-theme-accent/10 border border-theme-accent/20 text-theme-accent text-[10px] font-black uppercase tracking-widest">
+                  Institutional Enrollment
+                </div>
+                <div className="px-4 py-1.5 rounded-full bg-theme-text/5 border border-theme-border text-theme-text/60 text-[10px] font-black uppercase tracking-widest">
+                  Role: {user.role.replace('_', ' ')}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* User Preferences Section */}
       <section className="space-y-6">

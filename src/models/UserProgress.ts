@@ -37,6 +37,13 @@ const UserProgressSchema = new mongoose.Schema({
       date: { type: Date, default: Date.now }
     }]
   }],
+  videoProgress: [{
+    lessonId: { type: String, required: true },
+    watchedTime: { type: Number, required: true },
+    totalDuration: { type: Number, required: true },
+    percentage: { type: Number, required: true },
+    lastUpdated: { type: Date, default: Date.now }
+  }],
   finalTest: {
     score: { type: Number },
     totalQuestions: { type: Number },
