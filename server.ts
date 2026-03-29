@@ -14,6 +14,7 @@ import { User } from "./src/models/User.ts";
 import { Institution } from "./src/models/Institution.ts";
 import { Category } from "./src/models/Category.ts";
 import { Recommendation } from "./src/models/Recommendation.ts";
+import { PreferenceOption } from "./src/models/PreferenceOption.ts";
 
 dotenv.config();
 
@@ -152,13 +153,57 @@ async function startServer() {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
   });
 
-  // Middleware to check DB connection
-  app.use("/api", (req, res, next) => {
+  // Middleware to check DB connection and enforce authentication
+  const publicRoutes = ['/health', '/institutions', '/auth/sync', '/categories', '/courses'];
+  
+  app.use("/api", async (req: any, res: any, next: any) => {
     if (req.path === "/health") return next();
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({ error: "Database not connected" });
     }
-    next();
+
+    // Check if route is public
+    const isPublic = publicRoutes.some(route => req.path === route || req.path.startsWith(route + '/'));
+    // GET /api/institutions, /api/categories, /api/courses are public
+    if (isPublic && req.method === 'GET') return next();
+    // POST /api/auth/sync is public
+    if (req.path === '/auth/sync' && req.method === 'POST') return next();
+
+    // For all other /api routes, enforce authentication and institutional check
+    const uid = req.headers['x-user-uid'];
+    if (!uid) return res.status(401).json({ error: "Unauthorized" });
+    
+    try {
+      const user = await User.findOne({ uid });
+      if (!user) return res.status(404).json({ error: "User not found" });
+      
+      if (user.status === 'deactivated') {
+        return res.status(403).json({ error: "Your account has been deactivated." });
+      }
+
+      // PART 2: SESSION INVALIDATION (VERY IMPORTANT)
+      if (user.loginType === 'institutional' && user.institutionId) {
+        const inst = await Institution.findById(user.institutionId);
+        if (!inst) {
+          console.log(`[AUTH CHECK] Access revoked: Institution ${user.institutionId} not found for ${user.email}`);
+          return res.status(403).json({ error: "Access revoked by institution" });
+        }
+        
+        const permittedEmails = inst.permittedEmails || [];
+        const isAllowed = permittedEmails.some(e => e.toLowerCase() === user.email.toLowerCase());
+        
+        if (!isAllowed) {
+          console.log(`[AUTH CHECK] Access revoked: ${user.email} no longer in permitted list for ${inst.name}`);
+          return res.status(403).json({ error: "Access revoked by institution" });
+        }
+      }
+      
+      req.user = user;
+      next();
+    } catch (err) {
+      console.error("Middleware auth error:", err);
+      res.status(500).json({ error: "Authentication error" });
+    }
   });
 
   app.post("/api/upload", upload.single("image"), (req, res) => {
@@ -173,6 +218,7 @@ async function startServer() {
   app.post("/api/auth/sync", async (req, res) => {
     try {
       let { uid, email, displayName, photoURL, institutionId } = req.body;
+      console.log(`[AUTH SYNC] User: ${email}, InstitutionID: ${institutionId}`);
       
       // Convert external photoURL to base64 to ensure persistence
       if (photoURL && photoURL.startsWith('http') && !photoURL.includes('localhost') && !photoURL.includes('.run.app')) {
@@ -186,19 +232,32 @@ async function startServer() {
         }
       }
 
-      // If institutional login, validate email
+      // PART 1: STRICT LOGIN BLOCK (MANDATORY)
       if (institutionId) {
         if (!mongoose.Types.ObjectId.isValid(institutionId)) {
+          console.log(`[AUTH SYNC] Invalid Institution ID: ${institutionId}`);
           return res.status(400).json({ error: "Invalid Institution ID" });
         }
         const inst = await Institution.findById(institutionId);
         if (!inst) {
+          console.log(`[AUTH SYNC] Institution not found: ${institutionId}`);
           return res.status(404).json({ error: "Institution not found" });
         }
-        const isAllowed = inst.allowedEmails.some(e => e.toLowerCase() === email.toLowerCase());
-        if (!isAllowed) {
-          return res.status(403).json({ error: "Your email is not authorized for this institution. Please contact your organization or use personal login." });
+        
+        const permittedEmails = inst.permittedEmails || [];
+        console.log(`[AUTH SYNC] Institution: ${inst.name}, Permitted Emails: ${JSON.stringify(permittedEmails)}`);
+        
+        if (permittedEmails.length === 0) {
+          console.log(`[AUTH SYNC] Access denied: No permitted emails configured for ${inst.name}`);
+          return res.status(403).json({ error: "No users are authorized for this institution" });
         }
+
+        const isAllowed = permittedEmails.some(e => e.toLowerCase() === email.toLowerCase());
+        if (!isAllowed) {
+          console.log(`[AUTH SYNC] Access denied: ${email} not in permitted list for ${inst.name}`);
+          return res.status(403).json({ error: "You are not authorized to sign in with this institution" });
+        }
+        console.log(`[AUTH SYNC] Access granted for ${email} to ${inst.name}`);
       }
 
       let user = await User.findOne({ uid });
@@ -216,36 +275,28 @@ async function startServer() {
           counter++;
         }
 
+        const assignedRole = isDefaultAdmin ? 'admin' : (institutionId ? 'student' : 'user');
+        console.log(`[AUTH SYNC] Creating new user: ${email}, Role: ${assignedRole}, LoginType: ${institutionId ? 'institutional' : 'personal'}`);
+
         user = new User({
           uid,
           email,
           displayName,
           photoURL,
           username,
-          role: isDefaultAdmin ? 'admin' : (institutionId ? 'institution_student' : 'student'),
+          role: assignedRole,
           status: 'active',
           loginType: institutionId ? 'institutional' : 'personal',
           institutionId: institutionId || null
         });
       } else {
         // Update existing user info
-        // Only update displayName if it's not already set in the database
         if (!user.displayName && displayName) {
           user.displayName = displayName;
         }
-        // Only update photoURL if it's not already a local upload or base64
-        if (photoURL && !user.photoURL?.startsWith('data:image') && !user.photoURL?.startsWith('/public/uploads')) {
-          try {
-            const response = await axios.get(photoURL, { responseType: 'arraybuffer' });
-            const contentType = response.headers['content-type'];
-            const base64 = Buffer.from(response.data, 'binary').toString('base64');
-            user.photoURL = `data:${contentType};base64,${base64}`;
-          } catch (e) {
-            console.error("Failed to convert photoURL to base64:", e);
-            user.photoURL = photoURL; // Fallback to original URL
-          }
+        if (photoURL) {
+          user.photoURL = photoURL;
         }
-        user.lastLogin = new Date();
         
         // Ensure they have a username if they don't (legacy users)
         if (!user.username) {
@@ -259,18 +310,28 @@ async function startServer() {
           user.username = username;
         }
 
-        // If they logged in via institution this time, update it
+        // If logging in via institution, update role and institutionId
         if (institutionId) {
+          user.role = 'student';
           user.loginType = 'institutional';
           user.institutionId = institutionId;
+        } else {
+          // If personal login, ensure loginType is personal
+          user.loginType = 'personal';
+          // Only change role to 'user' if they are not already a higher role
+          if (user.role !== 'admin' && user.role !== 'institution_admin' && user.role !== 'staff') {
+            user.role = 'user';
+          }
         }
 
         // Ensure default admin always keeps admin role
         if (email === "rahis2486@gmail.com") {
           user.role = 'admin';
         }
+
+        user.lastLogin = new Date();
       }
-      
+
       await user.save();
       
       if (user.status === 'deactivated') {
@@ -284,13 +345,9 @@ async function startServer() {
     }
   });
 
-  // Admin Middleware
-  const isAdmin = async (req: any, res: any, next: any) => {
-    const uid = req.headers['x-user-uid'];
-    if (!uid) return res.status(401).json({ error: "Unauthorized" });
-    
-    const user = await User.findOne({ uid });
-    if (!user || user.role !== 'admin') {
+  // Admin Middleware (Depends on global auth middleware)
+  const isAdmin = (req: any, res: any, next: any) => {
+    if (!req.user || req.user.role !== 'admin') {
       return res.status(403).json({ error: "Forbidden: Admin access required" });
     }
     next();
@@ -319,6 +376,69 @@ async function startServer() {
     } catch (err) {
       console.error("Admin user update error:", err);
       res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  app.delete("/api/admin/users/:uid", isAdmin, async (req, res) => {
+    try {
+      const { uid } = req.params;
+      const user = await User.findOne({ uid });
+      
+      if (!user) return res.status(404).json({ error: "User not found" });
+      
+      // Prevent deleting the main admin
+      if (user.email === 'rahis2486@gmail.com') {
+        return res.status(403).json({ error: "Cannot delete the main administrator account." });
+      }
+
+      // Delete all related data
+      await Promise.all([
+        User.deleteOne({ uid }),
+        UserProgress.deleteMany({ userId: uid }),
+        Memory.deleteMany({ userId: uid }),
+        Summary.deleteMany({ userId: uid }),
+        LearningProfile.deleteOne({ userId: uid }),
+        ChatHistory.deleteMany({ userId: uid }),
+        MathSession.deleteMany({ userId: uid }),
+        Recommendation.deleteMany({ recommendedBy: uid })
+      ]);
+
+      res.json({ success: true, message: "User and all related data deleted successfully." });
+    } catch (err) {
+      console.error("Admin user delete error:", err);
+      res.status(500).json({ error: "Failed to delete user" });
+    }
+  });
+
+  // DANGER: Delete all users except main admin
+  app.delete("/api/admin/users-cleanup", isAdmin, async (req, res) => {
+    try {
+      const mainAdminEmail = 'rahis2486@gmail.com';
+      const mainAdmin = await User.findOne({ email: mainAdminEmail });
+      
+      if (!mainAdmin) return res.status(404).json({ error: "Main administrator account not found." });
+
+      const usersToDelete = await User.find({ email: { $ne: mainAdminEmail } });
+      const uidsToDelete = usersToDelete.map(u => u.uid);
+
+      await Promise.all([
+        User.deleteMany({ email: { $ne: mainAdminEmail } }),
+        UserProgress.deleteMany({ userId: { $in: uidsToDelete } }),
+        Memory.deleteMany({ userId: { $in: uidsToDelete } }),
+        Summary.deleteMany({ userId: { $in: uidsToDelete } }),
+        LearningProfile.deleteMany({ userId: { $in: uidsToDelete } }),
+        ChatHistory.deleteMany({ userId: { $in: uidsToDelete } }),
+        MathSession.deleteMany({ userId: { $in: uidsToDelete } }),
+        Recommendation.deleteMany({ recommendedBy: { $in: uidsToDelete } })
+      ]);
+
+      res.json({ 
+        success: true, 
+        message: `Successfully deleted ${uidsToDelete.length} users and their related data.` 
+      });
+    } catch (err) {
+      console.error("Admin users cleanup error:", err);
+      res.status(500).json({ error: "Failed to perform users cleanup" });
     }
   });
 
@@ -512,7 +632,7 @@ async function startServer() {
   // Institution Management
   app.get("/api/institutions", async (req, res) => {
     try {
-      const institutions = await Institution.find().select('name location logoUrl');
+      const institutions = await Institution.find().select('name location logoUrl permittedEmails');
       res.json(institutions);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch institutions" });
@@ -540,13 +660,16 @@ async function startServer() {
 
   app.put("/api/admin/institutions/:id", isAdmin, async (req, res) => {
     try {
+      console.log(`[ADMIN] Updating institution ${req.params.id}:`, JSON.stringify(req.body, null, 2));
       const institution = await Institution.findByIdAndUpdate(
         req.params.id,
         req.body,
         { new: true }
       );
+      console.log(`[ADMIN] Updated institution result:`, JSON.stringify(institution, null, 2));
       res.json(institution);
     } catch (err) {
+      console.error(`[ADMIN] Failed to update institution:`, err);
       res.status(500).json({ error: "Failed to update institution" });
     }
   });
@@ -588,15 +711,12 @@ async function startServer() {
     }
   });
 
-  app.get("/api/recommendations/:institutionId", async (req, res) => {
+  app.get("/api/recommendations/:institutionId", async (req: any, res: any) => {
     try {
       const { institutionId } = req.params;
-      const uid = req.headers['x-user-uid'];
+      const user = req.user;
       
-      if (!uid) return res.status(401).json({ error: "Unauthorized" });
-      
-      const user = await User.findOne({ uid });
-      if (!user) return res.status(404).json({ error: "User not found" });
+      if (!user) return res.status(401).json({ error: "Unauthorized" });
       
       // Check if user belongs to this institution or is a global admin
       if (user.role !== 'admin' && user.institutionId?.toString() !== institutionId) {
@@ -625,12 +745,11 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/recommendations/:institutionId/:courseId", async (req, res) => {
+  app.delete("/api/recommendations/:institutionId/:courseId", async (req: any, res: any) => {
     try {
       const { institutionId, courseId } = req.params;
-      const uid = req.headers['x-user-uid'];
+      const user = req.user;
       
-      const user = await User.findOne({ uid });
       const isAllowed = user && (
         user.role === 'admin' || 
         (user.role === 'institution_admin' && user.institutionId?.toString() === institutionId)
@@ -648,15 +767,12 @@ async function startServer() {
     }
   });
 
-  // Institution Admin Middleware
-  const isInstitutionAdmin = async (req: any, res: any, next: any) => {
+  // Institution Admin Middleware (Depends on global auth middleware)
+  const isInstitutionAdmin = (req: any, res: any, next: any) => {
     try {
-      const uid = req.headers['x-user-uid'];
-      if (!uid) return res.status(401).json({ error: "Unauthorized" });
+      const user = req.user;
+      if (!user) return res.status(401).json({ error: "Unauthorized" });
       
-      const user = await User.findOne({ uid });
-      if (!user) return res.status(404).json({ error: "User not found" });
-
       const institutionId = req.params.institutionId || req.body.institutionId;
 
       if (user.role === 'admin') return next(); // Global admin can do anything
@@ -684,13 +800,16 @@ async function startServer() {
   app.put("/api/institution/emails/:institutionId", isInstitutionAdmin, async (req, res) => {
     try {
       const { emails } = req.body;
+      console.log(`[INST ADMIN] Updating emails for ${req.params.institutionId}:`, emails);
       const inst = await Institution.findByIdAndUpdate(
         req.params.institutionId,
-        { allowedEmails: emails },
+        { permittedEmails: emails },
         { new: true }
       );
+      console.log(`[INST ADMIN] Updated institution result:`, JSON.stringify(inst, null, 2));
       res.json(inst);
     } catch (err) {
+      console.error(`[INST ADMIN] Failed to update permitted emails:`, err);
       res.status(500).json({ error: "Failed to update permitted emails" });
     }
   });
@@ -862,6 +981,8 @@ async function startServer() {
         country, 
         discoverySource, 
         interests, 
+        hobbies,
+        learningPreferences,
         primaryGoal,
         customGoal,
         dailyCommitment,
@@ -876,6 +997,8 @@ async function startServer() {
           country, 
           discoverySource, 
           interests, 
+          hobbies,
+          learningPreferences,
           primaryGoal,
           customGoal,
           dailyCommitment,
@@ -889,6 +1012,52 @@ async function startServer() {
     } catch (err) {
       console.error("Onboarding update error:", err);
       res.status(500).json({ error: "Failed to update onboarding data" });
+    }
+  });
+
+  // Preference Options API
+  app.get("/api/preference-options", async (req, res) => {
+    try {
+      const options = await PreferenceOption.find().sort({ label: 1 });
+      res.json(options);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch preference options" });
+    }
+  });
+
+  app.post("/api/admin/preference-options", isAdmin, async (req, res) => {
+    try {
+      const { type, label, value, iconName } = req.body;
+      const option = new PreferenceOption({ type, label, value, iconName });
+      await option.save();
+      res.status(201).json(option);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create preference option" });
+    }
+  });
+
+  app.put("/api/admin/preference-options/:id", isAdmin, async (req, res) => {
+    try {
+      const { type, label, value, iconName } = req.body;
+      const option = await PreferenceOption.findByIdAndUpdate(
+        req.params.id,
+        { type, label, value, iconName },
+        { new: true }
+      );
+      if (!option) return res.status(404).json({ error: "Option not found" });
+      res.json(option);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update preference option" });
+    }
+  });
+
+  app.delete("/api/admin/preference-options/:id", isAdmin, async (req, res) => {
+    try {
+      const option = await PreferenceOption.findByIdAndDelete(req.params.id);
+      if (!option) return res.status(404).json({ error: "Option not found" });
+      res.json({ message: "Option deleted successfully" });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete preference option" });
     }
   });
 

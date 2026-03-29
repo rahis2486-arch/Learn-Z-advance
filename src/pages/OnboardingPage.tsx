@@ -25,12 +25,14 @@ import {
   Target,
   Rocket,
   Loader2,
-  Check
+  Check,
+  Activity
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { useAssistant } from '../contexts/AssistantContext';
+import { apiFetch } from '../lib/api';
 
 const STEPS = [
   'Welcome',
@@ -54,9 +56,21 @@ export default function OnboardingPage() {
     country: '',
     discoverySource: '',
     interests: [] as string[],
+    hobbies: [] as string[],
+    learningPreferences: [] as string[],
     primaryGoal: '',
     customGoal: '',
     dailyCommitment: ''
+  });
+
+  const [preferenceOptions, setPreferenceOptions] = useState<{
+    interests: any[],
+    hobbies: any[],
+    learningPreferences: any[]
+  }>({
+    interests: [],
+    hobbies: [],
+    learningPreferences: []
   });
 
   useEffect(() => {
@@ -67,6 +81,25 @@ export default function OnboardingPage() {
       navigate('/learntube');
     }
   }, [user, authLoading, navigate]);
+
+  useEffect(() => {
+    const fetchOptions = async () => {
+      try {
+        const res = await apiFetch('/api/preference-options');
+        if (res.ok) {
+          const data = await res.json();
+          setPreferenceOptions({
+            interests: data.filter((opt: any) => opt.type === 'interest'),
+            hobbies: data.filter((opt: any) => opt.type === 'hobby'),
+            learningPreferences: data.filter((opt: any) => opt.type === 'learningPreference')
+          });
+        }
+      } catch (error) {
+        console.error("Failed to fetch preference options:", error);
+      }
+    };
+    fetchOptions();
+  }, []);
 
   const handleNext = () => {
     if (currentStep < STEPS.length - 1) {
@@ -85,7 +118,7 @@ export default function OnboardingPage() {
   const handleSubmit = async () => {
     setIsSubmitting(true);
     try {
-      const res = await fetch(`/api/users/${user?.uid}/onboarding`, {
+      const res = await apiFetch(`/api/users/${user?.uid}/onboarding`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -109,12 +142,12 @@ export default function OnboardingPage() {
     }
   };
 
-  const toggleInterest = (value: string) => {
+  const toggleSelection = (field: 'interests' | 'hobbies' | 'learningPreferences', value: string) => {
     setFormData(prev => ({
       ...prev,
-      interests: prev.interests.includes(value)
-        ? prev.interests.filter(i => i !== value)
-        : [...prev.interests, value]
+      [field]: prev[field].includes(value)
+        ? prev[field].filter(i => i !== value)
+        : [...prev[field], value]
     }));
   };
 
@@ -147,6 +180,23 @@ export default function OnboardingPage() {
             theme === 'light' ? "bg-indigo-600" : "bg-emerald-500"
           )}
         />
+      </div>
+
+      {/* Step Indicator */}
+      <div className="fixed top-8 left-1/2 -translate-x-1/2 flex items-center gap-2 z-50">
+        {STEPS.map((_, idx) => (
+          <div 
+            key={idx}
+            className={cn(
+              "h-1.5 rounded-full transition-all duration-500",
+              idx === currentStep 
+                ? (theme === 'light' ? "w-8 bg-indigo-600" : "w-8 bg-emerald-500")
+                : (idx < currentStep 
+                  ? (theme === 'light' ? "w-4 bg-indigo-600/40" : "w-4 bg-emerald-500/40")
+                  : (theme === 'light' ? "w-4 bg-slate-200" : "w-4 bg-white/10"))
+            )}
+          />
+        ))}
       </div>
 
       <div className="max-w-xl w-full relative z-10">
@@ -333,37 +383,105 @@ export default function OnboardingPage() {
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="space-y-8"
+              className="space-y-8 max-h-[70vh] overflow-y-auto pr-4 custom-scrollbar"
             >
               <div className="space-y-2">
-                <h2 className={cn("text-3xl font-black tracking-tight", theme === 'light' ? "text-slate-900" : "text-white")}>Interests & Fields</h2>
-                <p className={theme === 'light' ? "text-slate-500" : "text-white/40"}>What fields are you interested in?</p>
+                <h2 className={cn("text-3xl font-black tracking-tight", theme === 'light' ? "text-slate-900" : "text-white")}>Personalize Your Experience</h2>
+                <p className={theme === 'light' ? "text-slate-500" : "text-white/40"}>Help us tailor the content to your interests and style.</p>
               </div>
 
-              <div className="flex flex-wrap gap-3">
-                {[
-                  { id: 'programming', label: 'Programming', icon: Code },
-                  { id: 'ai', label: 'AI / Machine Learning', icon: Brain },
-                  { id: 'business', label: 'Business', icon: Briefcase },
-                  { id: 'finance', label: 'Finance', icon: DollarSign },
-                  { id: 'design', label: 'Design', icon: Palette },
-                  { id: 'marketing', label: 'Marketing', icon: TrendingUp },
-                  { id: 'personal', label: 'Personal Development', icon: Heart }
-                ].map(item => (
-                  <button
-                    key={item.id}
-                    onClick={() => toggleInterest(item.id)}
-                    className={cn(
-                      "flex items-center gap-2 px-5 py-3 rounded-full border transition-all",
-                      formData.interests.includes(item.id)
-                        ? (theme === 'light' ? "bg-indigo-600 border-indigo-600 text-white" : "bg-emerald-500 border-emerald-500 text-black")
-                        : (theme === 'light' ? "bg-white border-slate-200 text-slate-600" : "bg-white/5 border-white/10 text-white/60")
-                    )}
-                  >
-                    <item.icon size={16} />
-                    <span className="font-bold text-sm">{item.label}</span>
-                  </button>
-                ))}
+              {/* Interests Section */}
+              <div className="space-y-4">
+                <label className={cn("text-xs font-black uppercase tracking-widest", theme === 'light' ? "text-slate-400" : "text-white/20")}>Interests & Fields</label>
+                <div className="flex flex-wrap gap-3">
+                  {(preferenceOptions.interests.length > 0 ? preferenceOptions.interests : [
+                    { value: 'programming', label: 'Programming', icon: Code },
+                    { value: 'ai', label: 'AI / Machine Learning', icon: Brain },
+                    { value: 'business', label: 'Business', icon: Briefcase },
+                    { value: 'finance', label: 'Finance', icon: DollarSign },
+                    { value: 'design', label: 'Design', icon: Palette },
+                    { value: 'marketing', label: 'Marketing', icon: TrendingUp },
+                    { value: 'personal', label: 'Personal Development', icon: Heart }
+                  ]).map(item => {
+                    const Icon = (item as any).icon || Sparkles;
+                    return (
+                      <button
+                        key={item.value}
+                        onClick={() => toggleSelection('interests', item.value)}
+                        className={cn(
+                          "flex items-center gap-2 px-5 py-3 rounded-full border transition-all hover:scale-105 active:scale-95",
+                          formData.interests.includes(item.value)
+                            ? (theme === 'light' ? "bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "bg-emerald-500 border-emerald-500 text-black shadow-lg shadow-emerald-500/20")
+                            : (theme === 'light' ? "bg-white border-slate-200 text-slate-600 hover:border-indigo-500/50" : "bg-white/5 border-white/10 text-white/60 hover:border-emerald-500/50")
+                        )}
+                      >
+                        <Icon size={16} />
+                        <span className="font-bold text-sm">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Hobbies Section */}
+              <div className="space-y-4">
+                <label className={cn("text-xs font-black uppercase tracking-widest", theme === 'light' ? "text-slate-400" : "text-white/20")}>Hobbies</label>
+                <div className="flex flex-wrap gap-3">
+                  {(preferenceOptions.hobbies.length > 0 ? preferenceOptions.hobbies : [
+                    { value: 'gaming', label: 'Gaming', icon: Gamepad2 },
+                    { value: 'reading', label: 'Reading', icon: BookOpen },
+                    { value: 'photography', label: 'Photography', icon: Video },
+                    { value: 'traveling', label: 'Traveling', icon: Globe },
+                    { value: 'fitness', label: 'Fitness', icon: Activity }
+                  ]).map(item => {
+                    const Icon = (item as any).icon || Sparkles;
+                    return (
+                      <button
+                        key={item.value}
+                        onClick={() => toggleSelection('hobbies', item.value)}
+                        className={cn(
+                          "flex items-center gap-2 px-5 py-3 rounded-full border transition-all hover:scale-105 active:scale-95",
+                          formData.hobbies.includes(item.value)
+                            ? (theme === 'light' ? "bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "bg-emerald-500 border-emerald-500 text-black shadow-lg shadow-emerald-500/20")
+                            : (theme === 'light' ? "bg-white border-slate-200 text-slate-600 hover:border-indigo-500/50" : "bg-white/5 border-white/10 text-white/60 hover:border-emerald-500/50")
+                        )}
+                      >
+                        <Icon size={16} />
+                        <span className="font-bold text-sm">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Learning Preferences Section */}
+              <div className="space-y-4">
+                <label className={cn("text-xs font-black uppercase tracking-widest", theme === 'light' ? "text-slate-400" : "text-white/20")}>Learning Style</label>
+                <div className="flex flex-wrap gap-3">
+                  {(preferenceOptions.learningPreferences.length > 0 ? preferenceOptions.learningPreferences : [
+                    { value: 'visual', label: 'Visual (Videos/Images)', icon: Video },
+                    { value: 'practical', label: 'Practical (Projects/Hands-on)', icon: MousePointer2 },
+                    { value: 'theoretical', label: 'Theoretical (Reading/Concepts)', icon: BookOpen },
+                    { value: 'interactive', label: 'Interactive (Quizzes/AI Chat)', icon: Sparkles }
+                  ]).map(item => {
+                    const Icon = (item as any).icon || Sparkles;
+                    return (
+                      <button
+                        key={item.value}
+                        onClick={() => toggleSelection('learningPreferences', item.value)}
+                        className={cn(
+                          "flex items-center gap-2 px-5 py-3 rounded-full border transition-all hover:scale-105 active:scale-95",
+                          formData.learningPreferences.includes(item.value)
+                            ? (theme === 'light' ? "bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "bg-emerald-500 border-emerald-500 text-black shadow-lg shadow-emerald-500/20")
+                            : (theme === 'light' ? "bg-white border-slate-200 text-slate-600 hover:border-indigo-500/50" : "bg-white/5 border-white/10 text-white/60 hover:border-emerald-500/50")
+                        )}
+                      >
+                        <Icon size={16} />
+                        <span className="font-bold text-sm">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="flex gap-4 pt-4">

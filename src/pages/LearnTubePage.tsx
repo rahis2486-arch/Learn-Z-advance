@@ -5,6 +5,7 @@ import { BookOpen, Plus, Search, Play, Star, Clock, Sparkles, Filter, Tag } from
 import { cn } from "../lib/utils";
 import { useAuth } from "../contexts/AuthContext";
 import LoginModal from "../components/LoginModal";
+import { apiFetch } from "../lib/api";
 
 interface Course {
   _id: string;
@@ -83,7 +84,7 @@ export default function LearnTubePage() {
 
   const fetchCategories = async () => {
     try {
-      const res = await fetch("/api/categories");
+      const res = await apiFetch("/api/categories");
       if (res.ok) {
         const data = await res.json();
         const names = data.map((c: any) => c.name);
@@ -111,7 +112,7 @@ export default function LearnTubePage() {
         params.append("category", selectedCategory);
       }
 
-      const res = await fetch(`/api/courses?${params.toString()}`);
+      const res = await apiFetch(`/api/courses?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to fetch courses");
       const data = await res.json();
       
@@ -132,7 +133,7 @@ export default function LearnTubePage() {
   const fetchEnrolled = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/progress/${user.uid}`);
+      const res = await apiFetch(`/api/progress/${user.uid}`);
       if (!res.ok) throw new Error("Failed to fetch enrolled courses");
       const data = await res.json();
       if (Array.isArray(data)) {
@@ -147,7 +148,7 @@ export default function LearnTubePage() {
   const fetchInstitutionRecommendations = async () => {
     if (!user?.institutionId) return;
     try {
-      const res = await fetch(`/api/recommendations/${user.institutionId}`);
+      const res = await apiFetch(`/api/recommendations/${user.institutionId}`);
       if (res.ok) {
         const data = await res.json();
         setRecommendedByInst(data.map((c: any) => c._id));
@@ -178,11 +179,10 @@ export default function LearnTubePage() {
         recommendedBy: user.uid
       });
 
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 
-          "Content-Type": "application/json",
-          "x-user-uid": user.uid
+          "Content-Type": "application/json"
         },
         body
       });
@@ -211,7 +211,7 @@ export default function LearnTubePage() {
       return;
     }
     try {
-      const res = await fetch("/api/enroll", {
+      const res = await apiFetch("/api/enroll", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: user.uid, courseId, enrollmentSource: 'personal' }),

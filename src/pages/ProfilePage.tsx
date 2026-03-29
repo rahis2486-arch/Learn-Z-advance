@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { apiFetch } from '../lib/api';
 
 export default function ProfilePage() {
   const { user, refreshUser } = useAuth();
@@ -38,9 +39,7 @@ export default function ProfilePage() {
   const fetchInstitutionDetails = async () => {
     try {
       setLoadingInstitution(true);
-      const res = await fetch(`/api/institution/details/${user?.institutionId}`, {
-        headers: { 'x-user-uid': user?.uid || '' }
-      });
+      const res = await apiFetch(`/api/institution/details/${user?.institutionId}`);
       if (res.ok) {
         const data = await res.json();
         setInstitution(data);
@@ -55,7 +54,7 @@ export default function ProfilePage() {
   const fetchUserProgress = async () => {
     try {
       setLoadingProgress(true);
-      const res = await fetch(`/api/progress/${user?.uid}`);
+      const res = await apiFetch(`/api/progress/${user?.uid}`);
       if (res.ok) {
         const data = await res.json();
         setUserProgress(data);
@@ -108,7 +107,7 @@ export default function ProfilePage() {
     setUsernameSuggestion(null);
 
     try {
-      const res = await fetch(`/api/users/${user.uid}`, {
+      const res = await apiFetch(`/api/users/${user.uid}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -161,7 +160,7 @@ export default function ProfilePage() {
     formData.append('photo', file);
 
     try {
-      const res = await fetch(`/api/users/${user.uid}/profile-picture`, {
+      const res = await apiFetch(`/api/users/${user.uid}/profile-picture`, {
         method: 'POST',
         body: formData,
       });

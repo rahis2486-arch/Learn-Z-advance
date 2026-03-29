@@ -12,6 +12,7 @@ import {
   LineChart, Line, PieChart as RePieChart, Pie, Cell, AreaChart, Area
 } from 'recharts';
 import { cn } from '../lib/utils';
+import { apiFetch } from '../lib/api';
 
 interface DashboardStats {
   totalEnrolled: number;
@@ -82,7 +83,7 @@ export default function DashboardPage() {
       if (!user) return;
       try {
         setLoading(true);
-        const res = await fetch(`/api/dashboard/stats/${user.uid}?source=${dashboardSource}`);
+        const res = await apiFetch(`/api/dashboard/stats/${user.uid}?source=${dashboardSource}`);
         if (res.ok) {
           const data = await res.json();
           if (dashboardSource === 'institution') {

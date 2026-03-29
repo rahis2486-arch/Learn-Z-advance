@@ -13,6 +13,7 @@ import { cn } from "../lib/utils";
 import { useAssistant } from "../contexts/AssistantContext";
 import { useAuth } from "../contexts/AuthContext";
 import { GoogleGenAI, Type } from "@google/genai";
+import { apiFetch } from "../lib/api";
 
 interface QuizQuestion {
   question: string;
@@ -259,7 +260,7 @@ export default function ClassroomPage() {
           if (duration > 0) {
             const percentage = (currentTime / duration) * 100;
             
-            await fetch(`/api/progress/${user.uid}/${courseId}/video/${currentLesson._id}`, {
+            await apiFetch(`/api/progress/${user.uid}/${courseId}/video/${currentLesson._id}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -368,7 +369,7 @@ export default function ClassroomPage() {
     if (!user) return;
     try {
       setLoading(true);
-      const res = await fetch(`/api/progress/${user.uid}`);
+      const res = await apiFetch(`/api/progress/${user.uid}`);
       if (res.ok) {
         const data = await res.json();
         setMyCourses(data);
@@ -385,8 +386,8 @@ export default function ClassroomPage() {
       setLoading(true);
       setContext(null); // Clear context for clean transition
       const [courseRes, lessonsRes] = await Promise.all([
-        fetch(`/api/courses/${courseId}`),
-        fetch(`/api/courses/${courseId}/lessons`)
+        apiFetch(`/api/courses/${courseId}`),
+        apiFetch(`/api/courses/${courseId}/lessons`)
       ]);
       
       if (!courseRes.ok) throw new Error("Course not found");
@@ -402,7 +403,7 @@ export default function ClassroomPage() {
 
       // Fetch user progress for this course
       if (user) {
-        const progressRes = await fetch(`/api/progress/${user.uid}`);
+        const progressRes = await apiFetch(`/api/progress/${user.uid}`);
         if (progressRes.ok) {
           const allProgress = await progressRes.json();
           let currentProgress = allProgress.find((p: any) => 
@@ -422,7 +423,7 @@ export default function ClassroomPage() {
           // If still not found, and it's a personal course, auto-enroll
           if (!currentProgress && source === 'personal') {
             console.log(`[Classroom] No enrollment found for personal course. Enrolling...`);
-            const enrollRes = await fetch("/api/enroll", {
+            const enrollRes = await apiFetch("/api/enroll", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ userId: user.uid, courseId, enrollmentSource: 'personal' }),
@@ -449,7 +450,7 @@ export default function ClassroomPage() {
     if (!user || !courseId || !currentLesson) return;
     try {
       console.log(`[Classroom] Marking lesson ${currentLesson._id} complete for user ${user.uid}, course ${courseId}, source ${source}`);
-      const res = await fetch(`/api/progress/${user.uid}/${courseId}/lesson/${currentLesson._id}?enrollmentSource=${source}`, {
+      const res = await apiFetch(`/api/progress/${user.uid}/${courseId}/lesson/${currentLesson._id}?enrollmentSource=${source}`, {
         method: 'POST'
       });
       if (res.ok) {
@@ -654,7 +655,7 @@ export default function ClassroomPage() {
         : `/api/progress/${user.uid}/${courseId}/final-test`;
 
       console.log(`Submitting quiz to ${endpoint} with source: ${source}`);
-      const res = await fetch(endpoint, {
+      const res = await apiFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -746,7 +747,7 @@ export default function ClassroomPage() {
     setIsSubmittingRating(true);
     try {
       console.log(`[Classroom] Finalizing course ${courseId} for user ${user.uid}, source ${source}`);
-      const res = await fetch(`/api/progress/${user.uid}/${courseId}/complete`, {
+      const res = await apiFetch(`/api/progress/${user.uid}/${courseId}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rating, enrollmentSource: source })

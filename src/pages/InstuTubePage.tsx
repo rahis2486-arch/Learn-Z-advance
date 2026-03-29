@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import { BookOpen, Plus, Play, Star, Clock, Sparkles, Search } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAuth } from "../contexts/AuthContext";
+import { apiFetch } from "../lib/api";
 
 interface Course {
   _id: string;
@@ -38,11 +39,7 @@ export default function InstuTubePage() {
     if (!user?.institutionId) return;
     try {
       setLoading(true);
-      const res = await fetch(`/api/recommendations/${user.institutionId}`, {
-        headers: {
-          'x-user-uid': user.uid
-        }
-      });
+      const res = await apiFetch(`/api/recommendations/${user.institutionId}`);
       if (!res.ok) throw new Error("Failed to fetch recommendations");
       const data = await res.json();
       setCourses(data);
@@ -56,7 +53,7 @@ export default function InstuTubePage() {
   const fetchEnrolled = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/progress/${user.uid}`);
+      const res = await apiFetch(`/api/progress/${user.uid}`);
       if (!res.ok) throw new Error("Failed to fetch enrolled courses");
       const data = await res.json();
       if (Array.isArray(data)) {
@@ -70,7 +67,7 @@ export default function InstuTubePage() {
 
   const handleEnroll = async (courseId: string) => {
     try {
-      const res = await fetch("/api/enroll", {
+      const res = await apiFetch("/api/enroll", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 

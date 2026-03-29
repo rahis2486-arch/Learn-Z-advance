@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { auth, signInWithGoogle } from '../firebase';
 import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
+import { apiFetch } from '../lib/api';
 
 interface User {
   uid: string;
@@ -48,7 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const syncUser = async (firebaseUser: FirebaseUser, institutionId?: string) => {
     try {
-      const res = await fetch('/api/auth/sync', {
+      const res = await apiFetch('/api/auth/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -62,6 +63,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       if (res.status === 403) {
         const data = await res.json();
+        if (data.error === "Access revoked by institution") {
+          // apiFetch handles the logout and alert
+          return;
+        }
         await signOut(auth);
         setUser(null);
         throw new Error(data.error || "Unauthorized");
@@ -70,22 +75,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(userData);
       }
     } catch (error) {
-      // Rethrow if it's an error we explicitly threw (like 403)
-      if (error instanceof Error && (error.message.includes("authorized") || error.message.includes("deactivated") || error.message === "Unauthorized")) {
+      // Rethrow if it's an error we explicitly handled (like 403)
+      if (error instanceof Error && (
+        error.message.includes("authorized") || 
+        error.message.includes("deactivated") || 
+        error.message === "Unauthorized" ||
+        error.message.includes("revoked")
+      )) {
         throw error;
       }
       console.error("Failed to sync user:", error);
-      // Fallback to basic info
-      setUser({
-        uid: firebaseUser.uid,
-        email: firebaseUser.email,
-        displayName: firebaseUser.displayName,
-        photoURL: firebaseUser.photoURL,
-        role: 'user',
-        status: 'active',
-        onboardingCompleted: false,
-        loginType: 'personal'
-      });
+      // Fallback to basic info if not a critical auth error
+      if (!user) {
+        setUser({
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          displayName: firebaseUser.displayName,
+          photoURL: firebaseUser.photoURL,
+          role: 'user',
+          status: 'active',
+          onboardingCompleted: false,
+          loginType: 'personal'
+        });
+      }
     }
   };
 

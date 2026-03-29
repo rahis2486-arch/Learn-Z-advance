@@ -1,4 +1,5 @@
 import { GoogleGenAI, Modality, LiveServerMessage, FunctionDeclaration, Type } from "@google/genai";
+import { apiFetch } from "../lib/api";
 
 const API_KEY = process.env.GEMINI_API_KEY || "";
 
@@ -15,7 +16,7 @@ export async function getChatHistory(userId: string, courseId?: string): Promise
     if (!userId) return [];
     let url = `/api/history?userId=${userId}`;
     if (courseId) url += `&courseId=${courseId}`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) throw new Error(`Failed to fetch history: ${res.status}`);
     return res.json();
   } catch (err) {
@@ -29,7 +30,7 @@ export async function clearChatHistory(userId: string, courseId?: string) {
     if (!userId) return;
     let url = `/api/chat/history?userId=${userId}`;
     if (courseId) url += `&courseId=${courseId}`;
-    const res = await fetch(url, { method: 'DELETE' });
+    const res = await apiFetch(url, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to clear history: ${res.status}`);
   } catch (err) {
     console.error("Failed to clear history:", err);
@@ -39,7 +40,7 @@ export async function clearChatHistory(userId: string, courseId?: string) {
 export async function storeChatMessage(userId: string, role: 'user' | 'model', content: string, courseId?: string) {
   try {
     if (!userId) return;
-    const res = await fetch('/api/chat/store', {
+    const res = await apiFetch('/api/chat/store', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId, role, content, courseId }),
@@ -70,7 +71,7 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
 export async function storeMemory(content: string, embedding: number[], type: 'short-term' | 'long-term' = 'short-term', userId: string, courseId?: string) {
   try {
     if (!userId) throw new Error("userId is required to store memory");
-    const response = await fetch('/api/memory/store', {
+    const response = await apiFetch('/api/memory/store', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content, embedding, type, userId, courseId }),
@@ -91,7 +92,7 @@ export async function clearAllMemories(userId: string, courseId?: string) {
     if (!userId) return;
     let url = `/api/memory?userId=${userId}`;
     if (courseId) url += `&courseId=${courseId}`;
-    const res = await fetch(url, { method: 'DELETE' });
+    const res = await apiFetch(url, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to clear memories: ${res.status}`);
   } catch (err) {
     console.error("Failed to clear memories:", err);
@@ -101,7 +102,7 @@ export async function clearAllMemories(userId: string, courseId?: string) {
 export async function deleteMemory(id: string, userId: string) {
   try {
     if (!userId) return;
-    const res = await fetch(`/api/memory/${id}?userId=${userId}`, { method: 'DELETE' });
+    const res = await apiFetch(`/api/memory/${id}?userId=${userId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to delete memory: ${res.status}`);
   } catch (err) {
     console.error("Failed to delete memory:", err);
@@ -118,7 +119,7 @@ export async function listMemories(type: 'short-term' | 'long-term' | undefined,
     if (courseId) params.append('courseId', courseId);
     url += `?${params.toString()}`;
     
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) throw new Error(`Failed to list memories: ${res.status}`);
     return res.json();
   } catch (err) {
@@ -135,7 +136,7 @@ export interface SearchResult {
 export async function searchMemory(embedding: number[], type: 'short-term' | 'long-term' | undefined, userId: string, courseId?: string): Promise<SearchResult[]> {
   try {
     if (!userId) return [];
-    const res = await fetch('/api/memory/search', {
+    const res = await apiFetch('/api/memory/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ embedding, limit: 5, type, userId, courseId }),
@@ -259,7 +260,7 @@ export async function getLongTermSummary(userId: string, courseId?: string, retr
     let url = `${window.location.origin}/api/summary?userId=${userId}`;
     if (courseId) url += `&courseId=${courseId}`;
     
-    const res = await fetch(url, {
+    const res = await apiFetch(url, {
       headers: {
         'Accept': 'application/json',
         'Cache-Control': 'no-cache'
@@ -290,7 +291,7 @@ export async function updateLongTermSummary(content: string, userId: string, cou
   try {
     if (!userId) return;
     console.log(`Updating long-term summary for userId: ${userId}, courseId: ${courseId}...`);
-    const res = await fetch('/api/summary', {
+    const res = await apiFetch('/api/summary', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -326,7 +327,7 @@ export interface LearningProfile {
 export async function getLearningProfile(userId: string): Promise<LearningProfile | null> {
   try {
     if (!userId) return null;
-    const res = await fetch(`/api/learning-profile?userId=${userId}`);
+    const res = await apiFetch(`/api/learning-profile?userId=${userId}`);
     if (!res.ok) throw new Error(`Failed to fetch learning profile: ${res.status}`);
     return res.json();
   } catch (err) {
@@ -383,7 +384,7 @@ export const getLearningProfileTool: FunctionDeclaration = {
 export async function getDashboardStats(userId: string) {
   try {
     if (!userId) return null;
-    const res = await fetch(`/api/dashboard/stats/${userId}`);
+    const res = await apiFetch(`/api/dashboard/stats/${userId}`);
     if (!res.ok) throw new Error(`Failed to fetch dashboard stats: ${res.status}`);
     return res.json();
   } catch (err) {
@@ -395,7 +396,7 @@ export async function getDashboardStats(userId: string) {
 export async function getUserProgress(userId: string) {
   try {
     if (!userId) return null;
-    const res = await fetch(`/api/progress/${userId}`);
+    const res = await apiFetch(`/api/progress/${userId}`);
     if (!res.ok) throw new Error(`Failed to fetch user progress: ${res.status}`);
     return res.json();
   } catch (err) {
@@ -591,7 +592,7 @@ export const seekVideoTool: FunctionDeclaration = {
 
 export async function searchCourses(query: string) {
   try {
-    const res = await fetch(`/api/courses?search=${encodeURIComponent(query)}`);
+    const res = await apiFetch(`/api/courses?search=${encodeURIComponent(query)}`);
     if (!res.ok) throw new Error(`Failed to search courses: ${res.status}`);
     return res.json();
   } catch (err) {
@@ -602,7 +603,7 @@ export async function searchCourses(query: string) {
 
 export async function recommendCourses(userId: string) {
   try {
-    const res = await fetch(`/api/courses?recommend=true&userId=${userId}`);
+    const res = await apiFetch(`/api/courses?recommend=true&userId=${userId}`);
     if (!res.ok) throw new Error(`Failed to get recommendations: ${res.status}`);
     return res.json();
   } catch (err) {
@@ -613,7 +614,7 @@ export async function recommendCourses(userId: string) {
 
 export async function checkEnrollment(userId: string, courseId: string) {
   try {
-    const res = await fetch(`/api/progress/${userId}`);
+    const res = await apiFetch(`/api/progress/${userId}`);
     if (!res.ok) throw new Error(`Failed to check enrollment: ${res.status}`);
     const progress = await res.json();
     return progress.some((p: any) => p.courseId?._id === courseId);
@@ -625,7 +626,7 @@ export async function checkEnrollment(userId: string, courseId: string) {
 
 export async function enrollCourse(userId: string, courseId: string, source: string = 'personal') {
   try {
-    const res = await fetch("/api/enroll", {
+    const res = await apiFetch("/api/enroll", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userId, courseId, enrollmentSource: source }),
@@ -641,7 +642,7 @@ export async function enrollCourse(userId: string, courseId: string, source: str
 export async function updateLearningInsights(userId: string, insights: string) {
   try {
     if (!userId) return;
-    const res = await fetch('/api/learning-profile/insights', {
+    const res = await apiFetch('/api/learning-profile/insights', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId, insights }),
@@ -670,7 +671,7 @@ export interface MathSession {
 
 export async function getMathSessions(userId: string): Promise<MathSession[]> {
   try {
-    const res = await fetch(`/api/math/sessions?userId=${userId}`);
+    const res = await apiFetch(`/api/math/sessions?userId=${userId}`);
     if (!res.ok) throw new Error(`Failed to fetch math sessions: ${res.status}`);
     return res.json();
   } catch (err) {
@@ -682,7 +683,7 @@ export async function getMathSessions(userId: string): Promise<MathSession[]> {
 export async function createMathSession(data: Partial<MathSession> & { userId: string }): Promise<MathSession | null> {
   try {
     if (!data.userId) throw new Error("userId is required to create math session");
-    const res = await fetch('/api/math/sessions', {
+    const res = await apiFetch('/api/math/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -698,7 +699,7 @@ export async function createMathSession(data: Partial<MathSession> & { userId: s
 export async function updateMathSession(id: string, data: Partial<MathSession> & { userId: string }): Promise<MathSession | null> {
   try {
     if (!data.userId) throw new Error("userId is required to update math session");
-    const res = await fetch(`/api/math/sessions/${id}`, {
+    const res = await apiFetch(`/api/math/sessions/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -714,7 +715,7 @@ export async function updateMathSession(id: string, data: Partial<MathSession> &
 export async function deleteMathSession(id: string, userId: string) {
   try {
     if (!userId) return;
-    const res = await fetch(`/api/math/sessions/${id}?userId=${userId}`, { method: 'DELETE' });
+    const res = await apiFetch(`/api/math/sessions/${id}?userId=${userId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to delete math session: ${res.status}`);
   } catch (err) {
     console.error("Failed to delete math session:", err);

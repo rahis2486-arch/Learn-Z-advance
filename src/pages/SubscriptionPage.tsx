@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { useAssistant } from '../contexts/AssistantContext';
 import { useAuth } from '../contexts/AuthContext';
+import { apiFetch } from '../lib/api';
 
 const plans = [
   {
@@ -87,7 +88,7 @@ export default function SubscriptionPage() {
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     try {
-      const res = await fetch('/api/subscription/upgrade', {
+      const res = await apiFetch('/api/subscription/upgrade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -18,6 +18,7 @@ import { cn } from "../lib/utils";
 import { useAuth } from "../contexts/AuthContext";
 import { useAssistant } from "../contexts/AssistantContext";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { apiFetch } from "../lib/api";
 
 interface User {
   uid: string;
@@ -58,7 +59,7 @@ interface Institution {
   name: string;
   location?: string;
   logoUrl?: string;
-  allowedEmails: string[];
+  permittedEmails: string[];
   createdAt: string;
 }
 
@@ -66,6 +67,14 @@ interface Category {
   _id: string;
   name: string;
   description?: string;
+}
+
+interface PreferenceOption {
+  _id: string;
+  type: 'interest' | 'learningPreference' | 'hobby';
+  label: string;
+  value: string;
+  iconName?: string;
 }
 
 const CategorySelect = ({ value, onChange, categories }: { value: string, onChange: (val: string) => void, categories: Category[] }) => {
@@ -139,15 +148,19 @@ export default function AdminPage() {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const { theme } = useAssistant();
-  const [activeTab, setActiveTab] = useState<"courses" | "users" | "institutions" | "categories" | "analytics">("courses");
+  const [activeTab, setActiveTab] = useState<"courses" | "users" | "institutions" | "categories" | "analytics" | "preferences">("courses");
   const [courses, setCourses] = useState<Course[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [preferenceOptions, setPreferenceOptions] = useState<PreferenceOption[]>([]);
   const [institutionSearchQuery, setInstitutionSearchQuery] = useState("");
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [selectedInstitution, setSelectedInstitution] = useState<Institution | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
+  const [selectedPreference, setSelectedPreference] = useState<PreferenceOption | null>(null);
+  const [isEditingPreference, setIsEditingPreference] = useState(false);
+  const [preferenceForm, setPreferenceForm] = useState({ type: 'interest' as PreferenceOption['type'], label: '', value: '', iconName: '' });
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyticsData, setAnalyticsData] = useState<any>(null);
@@ -164,12 +177,8 @@ export default function AdminPage() {
     setIsAnalyticsLoading(true);
     try {
       const [analyticsRes, comparisonRes] = await Promise.all([
-        fetch(`/api/admin/analytics?range=${analyticsRange}&interval=${analyticsInterval}`, {
-          headers: { 'x-user-uid': currentUser?.uid || '' }
-        }),
-        fetch(`/api/admin/analytics/institutions-comparison`, {
-          headers: { 'x-user-uid': currentUser?.uid || '' }
-        })
+        apiFetch(`/api/admin/analytics?range=${analyticsRange}&interval=${analyticsInterval}`),
+        apiFetch(`/api/admin/analytics/institutions-comparison`)
       ]);
       
       const data = await analyticsRes.json();
@@ -187,9 +196,7 @@ export default function AdminPage() {
   const fetchInstitutionAnalytics = async (instId: string) => {
     setIsInstAnalyticsLoading(true);
     try {
-      const res = await fetch(`/api/admin/analytics/institution/${instId}`, {
-        headers: { 'x-user-uid': currentUser?.uid || '' }
-      });
+      const res = await apiFetch(`/api/admin/analytics/institution/${instId}`);
       const data = await res.json();
       setSelectedInstAnalytics(data);
     } catch (error) {
@@ -215,7 +222,7 @@ export default function AdminPage() {
     name: "",
     location: "",
     logoUrl: "",
-    allowedEmails: [] as string[]
+    permittedEmails: [] as string[]
   });
   const [emailInput, setEmailInput] = useState("");
 
@@ -266,6 +273,8 @@ export default function AdminPage() {
       fetchInstitutions();
     } else if (activeTab === "categories") {
       fetchCategories();
+    } else if (activeTab === "preferences") {
+      fetchPreferenceOptions();
     }
   }, [activeTab]);
 
@@ -276,7 +285,7 @@ export default function AdminPage() {
   const fetchCategories = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/categories");
+      const res = await apiFetch("/api/categories");
       const data = await res.json();
       setCategories(data);
     } catch (err) {
@@ -286,16 +295,76 @@ export default function AdminPage() {
     }
   };
 
+  const fetchPreferenceOptions = async () => {
+    try {
+      setLoading(true);
+      const res = await apiFetch("/api/preference-options");
+      const data = await res.json();
+      setPreferenceOptions(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSavePreference = async () => {
+    try {
+      const method = selectedPreference ? "PUT" : "POST";
+      const url = selectedPreference ? `/api/admin/preference-options/${selectedPreference._id}` : "/api/admin/preference-options";
+      
+      const res = await apiFetch(url, {
+        method,
+        headers: { 
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(preferenceForm),
+      });
+      
+      if (res.ok) {
+        fetchPreferenceOptions();
+        setIsEditingPreference(false);
+        setSelectedPreference(null);
+        setPreferenceForm({ type: 'interest', label: '', value: '', iconName: '' });
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to save preference option");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeletePreference = async (id: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Preference Option",
+      message: "Are you sure you want to delete this preference option? This will remove it from onboarding for new users.",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await apiFetch(`/api/admin/preference-options/${id}`, { 
+            method: "DELETE"
+          });
+          if (res.ok) {
+            fetchPreferenceOptions();
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    });
+  };
+
   const handleSaveCategory = async () => {
     try {
       const method = selectedCategory ? "PUT" : "POST";
       const url = selectedCategory ? `/api/categories/${selectedCategory._id}` : "/api/categories";
       
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 
-          "Content-Type": "application/json",
-          "x-user-uid": currentUser?.uid || ""
+          "Content-Type": "application/json"
         },
         body: JSON.stringify(categoryForm),
       });
@@ -322,9 +391,8 @@ export default function AdminPage() {
       variant: "danger",
       onConfirm: async () => {
         try {
-          const res = await fetch(`/api/categories/${id}`, { 
-            method: "DELETE",
-            headers: { "x-user-uid": currentUser?.uid || "" }
+          const res = await apiFetch(`/api/categories/${id}`, { 
+            method: "DELETE"
           });
           if (res.ok) {
             fetchCategories();
@@ -339,7 +407,7 @@ export default function AdminPage() {
   const fetchInstitutions = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/admin/institutions", {
+      const res = await apiFetch("/api/admin/institutions", {
         headers: { "x-user-uid": currentUser?.uid || "" }
       });
       const data = await res.json();
@@ -358,11 +426,10 @@ export default function AdminPage() {
         ? `/api/admin/institutions/${selectedInstitution._id}` 
         : "/api/admin/institutions";
       
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 
-          "Content-Type": "application/json",
-          "x-user-uid": currentUser?.uid || ""
+          "Content-Type": "application/json"
         },
         body: JSON.stringify(institutionForm),
       });
@@ -371,7 +438,7 @@ export default function AdminPage() {
         fetchInstitutions();
         setIsEditingInstitution(false);
         setSelectedInstitution(null);
-        setInstitutionForm({ name: "", location: "", logoUrl: "", allowedEmails: [] });
+        setInstitutionForm({ name: "", location: "", logoUrl: "", permittedEmails: [] });
       }
     } catch (err) {
       console.error(err);
@@ -386,9 +453,8 @@ export default function AdminPage() {
       variant: "danger",
       onConfirm: async () => {
         try {
-          const res = await fetch(`/api/admin/institutions/${id}`, { 
-            method: "DELETE",
-            headers: { "x-user-uid": currentUser?.uid || "" }
+          const res = await apiFetch(`/api/admin/institutions/${id}`, { 
+            method: "DELETE"
           });
           if (res.ok) {
             fetchInstitutions();
@@ -420,10 +486,10 @@ export default function AdminPage() {
   };
 
   const addEmail = () => {
-    if (emailInput && !institutionForm.allowedEmails.includes(emailInput)) {
+    if (emailInput && !institutionForm.permittedEmails.includes(emailInput)) {
       setInstitutionForm({
         ...institutionForm,
-        allowedEmails: [...institutionForm.allowedEmails, emailInput]
+        permittedEmails: [...institutionForm.permittedEmails, emailInput]
       });
       setEmailInput("");
     }
@@ -432,7 +498,7 @@ export default function AdminPage() {
   const removeEmail = (email: string) => {
     setInstitutionForm({
       ...institutionForm,
-      allowedEmails: institutionForm.allowedEmails.filter(e => e !== email)
+      permittedEmails: institutionForm.permittedEmails.filter(e => e !== email)
     });
   };
 
@@ -446,12 +512,12 @@ export default function AdminPage() {
       // Split by comma, newline, or semicolon and trim
       const emails = text.split(/[,\n;]/)
         .map(e => e.trim())
-        .filter(e => e && e.includes('@') && !institutionForm.allowedEmails.includes(e));
+        .filter(e => e && e.includes('@') && !institutionForm.permittedEmails.includes(e));
       
       if (emails.length > 0) {
         setInstitutionForm({
           ...institutionForm,
-          allowedEmails: [...institutionForm.allowedEmails, ...emails]
+          permittedEmails: [...institutionForm.permittedEmails, ...emails]
         });
       }
     };
@@ -463,7 +529,7 @@ export default function AdminPage() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/admin/users", {
+      const res = await apiFetch("/api/admin/users", {
         headers: { "x-user-uid": currentUser?.uid || "" }
       });
       const data = await res.json();
@@ -481,11 +547,10 @@ export default function AdminPage() {
       return;
     }
     try {
-      const res = await fetch(`/api/admin/users/${uid}`, {
+      const res = await apiFetch(`/api/admin/users/${uid}`, {
         method: "PUT",
         headers: { 
-          "Content-Type": "application/json",
-          "x-user-uid": currentUser?.uid || ""
+          "Content-Type": "application/json"
         },
         body: JSON.stringify(updates),
       });
@@ -510,6 +575,56 @@ export default function AdminPage() {
     setIsEditingUser(true);
   };
 
+  const handleDeleteUser = async (uid: string, email: string) => {
+    if (email === 'rahis2486@gmail.com') {
+      alert("You cannot delete the main administrator account.");
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete user ${email} and ALL their related data? This action is irreversible.`)) {
+      return;
+    }
+
+    try {
+      const res = await apiFetch(`/api/admin/users/${uid}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to delete user");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("An error occurred while deleting the user.");
+    }
+  };
+
+  const handleCleanupUsers = async () => {
+    if (!confirm("DANGER: This will delete EVERY user and their related data except the main administrator (rahis2486@gmail.com). Are you absolutely sure?")) {
+      return;
+    }
+
+    try {
+      const res = await apiFetch("/api/admin/users-cleanup", {
+        method: "DELETE",
+        headers: { "x-user-uid": currentUser?.uid || "" }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(data.message);
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to perform cleanup");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("An error occurred while performing cleanup.");
+    }
+  };
+
   useEffect(() => {
     if (selectedCourse) {
       fetchLessons(selectedCourse._id);
@@ -518,7 +633,7 @@ export default function AdminPage() {
 
   const fetchCourses = async () => {
     try {
-      const res = await fetch("/api/courses?limit=100", {
+      const res = await apiFetch("/api/courses?limit=100", {
         headers: { "x-user-uid": currentUser?.uid || "" }
       });
       const data = await res.json();
@@ -532,9 +647,7 @@ export default function AdminPage() {
 
   const fetchLessons = async (courseId: string) => {
     try {
-      const res = await fetch(`/api/courses/${courseId}/lessons`, {
-        headers: { "x-user-uid": currentUser?.uid || "" }
-      });
+      const res = await apiFetch(`/api/courses/${courseId}/lessons`);
       const data = await res.json();
       setLessons(data);
     } catch (err) {
@@ -571,11 +684,10 @@ export default function AdminPage() {
       const method = selectedCourse && isEditingCourse ? "PUT" : "POST";
       const url = selectedCourse && isEditingCourse ? `/api/courses/${selectedCourse._id}` : "/api/courses";
       
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 
-          "Content-Type": "application/json",
-          "x-user-uid": currentUser?.uid || ""
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({
           ...courseForm,
@@ -601,9 +713,8 @@ export default function AdminPage() {
       variant: "danger",
       onConfirm: async () => {
         try {
-          const res = await fetch(`/api/courses/${id}`, { 
-            method: "DELETE",
-            headers: { "x-user-uid": currentUser?.uid || "" }
+          const res = await apiFetch(`/api/courses/${id}`, { 
+            method: "DELETE"
           });
           if (res.ok) {
             fetchCourses();
@@ -622,11 +733,10 @@ export default function AdminPage() {
       const method = editingLessonId ? "PUT" : "POST";
       const url = editingLessonId ? `/api/lessons/${editingLessonId}` : "/api/lessons";
       
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 
-          "Content-Type": "application/json",
-          "x-user-uid": currentUser?.uid || ""
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({ ...lessonForm, courseId: selectedCourse._id }),
       });
@@ -658,9 +768,8 @@ export default function AdminPage() {
       variant: "danger",
       onConfirm: async () => {
         try {
-          const res = await fetch(`/api/lessons/${id}`, { 
-            method: "DELETE",
-            headers: { "x-user-uid": currentUser?.uid || "" }
+          const res = await apiFetch(`/api/lessons/${id}`, { 
+            method: "DELETE"
           });
           if (res.ok && selectedCourse) {
             fetchLessons(selectedCourse._id);
@@ -755,6 +864,16 @@ export default function AdminPage() {
             <BarChart3 size={18} />
             <span className="font-bold text-sm">Platform Analytics</span>
           </button>
+          <button 
+            onClick={() => setActiveTab("preferences")}
+            className={cn(
+              "w-full flex items-center gap-3 p-3 rounded-xl transition-all",
+              activeTab === "preferences" ? "bg-theme-accent/10 text-theme-accent" : "text-theme-text/40 hover:bg-theme-text/5"
+            )}
+          >
+            <Target size={18} />
+            <span className="font-bold text-sm">Preferences Management</span>
+          </button>
         </div>
 
         {activeTab === "courses" && (
@@ -825,6 +944,14 @@ export default function AdminPage() {
                   <p className="text-theme-text/40">Manage roles and access for all Learn-Z users.</p>
                 </div>
                 <div className="flex items-center gap-4">
+                  <button
+                    onClick={handleCleanupUsers}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl text-xs font-bold hover:bg-red-500/20 transition-colors"
+                    title="Delete all users except main admin"
+                  >
+                    <Trash2 size={14} />
+                    Cleanup Users
+                  </button>
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-text/40" size={16} />
                     <input 
@@ -911,6 +1038,15 @@ export default function AdminPage() {
                             >
                               <Edit2 size={18} />
                             </button>
+                            {u.email !== 'rahis2486@gmail.com' && (
+                              <button 
+                                onClick={() => handleDeleteUser(u.uid, u.email)}
+                                className="p-2 hover:bg-red-500/10 rounded-lg text-theme-text/40 hover:text-red-500 transition-colors"
+                                title="Delete User"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            )}
                             <button 
                               onClick={() => updateUser(u.uid, { status: u.status === 'active' ? 'deactivated' : 'active' })}
                               className={cn(
@@ -944,7 +1080,7 @@ export default function AdminPage() {
                 <button 
                   onClick={() => {
                     setSelectedInstitution(null);
-                    setInstitutionForm({ name: "", location: "", logoUrl: "", allowedEmails: [] });
+                    setInstitutionForm({ name: "", location: "", logoUrl: "", permittedEmails: [] });
                     setIsEditingInstitution(true);
                   }}
                   className="flex items-center gap-2 px-6 py-3 bg-theme-accent text-white font-bold rounded-xl hover:opacity-90 transition-opacity"
@@ -1020,7 +1156,7 @@ export default function AdminPage() {
 
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
-                        <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Allowed Emails</label>
+                        <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Permitted Emails</label>
                         <div className="relative">
                           <button className="text-[10px] font-black uppercase tracking-widest text-theme-accent hover:underline flex items-center gap-1">
                             <Upload size={10} />
@@ -1051,8 +1187,8 @@ export default function AdminPage() {
                         </button>
                       </div>
                       <div className="bg-theme-bg border border-theme-border rounded-2xl p-4 h-[240px] overflow-y-auto space-y-2">
-                        {institutionForm.allowedEmails.length > 0 ? (
-                          institutionForm.allowedEmails.map(email => (
+                        {institutionForm.permittedEmails.length > 0 ? (
+                          institutionForm.permittedEmails.map(email => (
                             <div key={email} className="flex items-center justify-between p-3 bg-theme-card border border-theme-border rounded-xl group">
                               <span className="text-sm">{email}</span>
                               <button 
@@ -1112,7 +1248,7 @@ export default function AdminPage() {
                                 name: inst.name,
                                 location: inst.location || "",
                                 logoUrl: inst.logoUrl || "",
-                                allowedEmails: inst.allowedEmails
+                                permittedEmails: inst.permittedEmails || []
                               });
                               setIsEditingInstitution(true);
                             }}
@@ -1138,7 +1274,7 @@ export default function AdminPage() {
                       <div className="pt-4 border-t border-theme-border flex items-center justify-between">
                         <div className="flex items-center gap-2 text-xs font-bold text-theme-text/40">
                           <Users size={14} />
-                          {inst.allowedEmails.length} Allowed Emails
+                          {inst.permittedEmails?.length || 0} Permitted Emails
                         </div>
                         <div className="text-[10px] uppercase tracking-widest text-theme-text/20">
                           ID: {inst._id.slice(-6)}
@@ -1603,6 +1739,138 @@ export default function AdminPage() {
                 <div className="h-[400px] flex flex-col items-center justify-center text-theme-text/20">
                   <PieChart size={64} className="animate-pulse" />
                   <p className="mt-4 font-bold">Synthesizing platform data...</p>
+                </div>
+              )}
+            </motion.div>
+          ) : activeTab === "preferences" ? (
+            <motion.div
+              key="preferences-list"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-black tracking-tight">Preferences Management</h2>
+                  <p className="text-theme-text/40">Manage dynamic options for interests, hobbies, and learning styles.</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setSelectedPreference(null);
+                    setPreferenceForm({ type: 'interest', label: '', value: '', iconName: '' });
+                    setIsEditingPreference(true);
+                  }}
+                  className="flex items-center gap-2 px-6 py-3 bg-theme-accent text-white font-bold rounded-xl hover:opacity-90 transition-opacity"
+                >
+                  <Plus size={20} /> Add Option
+                </button>
+              </div>
+
+              {isEditingPreference ? (
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="bg-theme-card border border-theme-border rounded-[32px] p-8 space-y-8 shadow-sm max-w-2xl"
+                >
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xl font-bold">{selectedPreference ? "Edit Option" : "New Option"}</h3>
+                    <button onClick={() => setIsEditingPreference(false)} className="p-2 hover:bg-theme-text/5 rounded-full">
+                      <X size={24} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Option Type</label>
+                      <select
+                        value={preferenceForm.type}
+                        onChange={e => setPreferenceForm({ ...preferenceForm, type: e.target.value as any })}
+                        className="w-full bg-theme-bg border border-theme-border rounded-xl p-4 focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                      >
+                        <option value="interest">Interest</option>
+                        <option value="hobby">Hobby</option>
+                        <option value="learningPreference">Learning Style</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Label</label>
+                      <input
+                        type="text"
+                        value={preferenceForm.label}
+                        onChange={e => setPreferenceForm({ ...preferenceForm, label: e.target.value })}
+                        className="w-full bg-theme-bg border border-theme-border rounded-xl p-4 focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                        placeholder="e.g. Photography"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">Value (Unique Key)</label>
+                      <input
+                        type="text"
+                        value={preferenceForm.value}
+                        onChange={e => setPreferenceForm({ ...preferenceForm, value: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
+                        className="w-full bg-theme-bg border border-theme-border rounded-xl p-4 focus:ring-2 focus:ring-theme-accent/50 outline-none"
+                        placeholder="e.g. photography"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-4 pt-4 border-t border-theme-border">
+                    <button 
+                      onClick={() => setIsEditingPreference(false)}
+                      className="px-8 py-3 rounded-xl text-theme-text/60 hover:text-theme-text"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={handleSavePreference}
+                      className="px-8 py-3 bg-theme-accent text-white font-bold rounded-xl hover:opacity-90 transition-opacity"
+                    >
+                      {selectedPreference ? "Update Option" : "Create Option"}
+                    </button>
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {['interest', 'hobby', 'learningPreference'].map(type => (
+                    <div key={type} className="space-y-4">
+                      <h3 className="text-sm font-black uppercase tracking-widest text-theme-text/40 px-2">
+                        {type === 'interest' ? 'Interests' : type === 'hobby' ? 'Hobbies' : 'Learning Styles'}
+                      </h3>
+                      <div className="space-y-2">
+                        {preferenceOptions.filter(opt => opt.type === type).map(opt => (
+                          <div key={opt._id} className="bg-theme-card border border-theme-border rounded-2xl p-4 flex items-center justify-between group hover:border-theme-accent/30 transition-all">
+                            <div>
+                              <p className="font-bold">{opt.label}</p>
+                              <p className="text-[10px] text-theme-text/40 font-mono">{opt.value}</p>
+                            </div>
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button 
+                                onClick={() => {
+                                  setSelectedPreference(opt);
+                                  setPreferenceForm({ type: opt.type, label: opt.label, value: opt.value, iconName: opt.iconName || '' });
+                                  setIsEditingPreference(true);
+                                }}
+                                className="p-2 hover:bg-theme-accent/10 text-theme-accent rounded-lg transition-colors"
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                              <button 
+                                onClick={() => handleDeletePreference(opt._id)}
+                                className="p-2 hover:bg-red-500/10 text-red-500 rounded-lg transition-colors"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {preferenceOptions.filter(opt => opt.type === type).length === 0 && (
+                          <div className="p-8 text-center border-2 border-dashed border-theme-border rounded-2xl text-theme-text/20">
+                            <p className="text-xs font-bold">No options added yet</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </motion.div>

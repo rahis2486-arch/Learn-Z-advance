@@ -4,7 +4,7 @@ const InstitutionSchema = new mongoose.Schema({
   name: { type: String, required: true },
   location: String,
   logoUrl: String,
-  allowedEmails: [{ type: String }],
+  permittedEmails: [{ type: String }],
   createdAt: { type: Date, default: Date.now }
 });
 

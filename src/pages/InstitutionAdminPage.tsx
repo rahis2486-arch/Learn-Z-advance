@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { apiFetch } from '../lib/api';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, 
   Tooltip, ResponsiveContainer, LineChart, Line,
@@ -57,7 +58,7 @@ export default function InstitutionAdminPage() {
   const searchCourses = async () => {
     try {
       setSearchingCourses(true);
-      const res = await fetch(`/api/courses?search=${encodeURIComponent(courseSearch)}&limit=5`);
+      const res = await apiFetch(`/api/courses?search=${encodeURIComponent(courseSearch)}&limit=5`);
       if (res.ok) {
         const data = await res.json();
         setCourseResults(data.courses || []);
@@ -72,13 +73,12 @@ export default function InstitutionAdminPage() {
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      const headers = { 'x-user-uid': user?.uid || '' };
       
       const [statsRes, studentsRes, recsRes, detailsRes] = await Promise.all([
-        fetch(`/api/institution/stats/${user?.institutionId}`, { headers }),
-        fetch(`/api/institution/students/${user?.institutionId}`, { headers }),
-        fetch(`/api/recommendations/${user?.institutionId}`, { headers }),
-        fetch(`/api/institution/details/${user?.institutionId}`, { headers })
+        apiFetch(`/api/institution/stats/${user?.institutionId}`),
+        apiFetch(`/api/institution/students/${user?.institutionId}`),
+        apiFetch(`/api/recommendations/${user?.institutionId}`),
+        apiFetch(`/api/institution/details/${user?.institutionId}`)
       ]);
 
       if (statsRes.ok) setStats(await statsRes.json());
@@ -87,7 +87,7 @@ export default function InstitutionAdminPage() {
       if (detailsRes.ok) {
         const data = await detailsRes.json();
         setInstitution(data);
-        setPermittedEmails(data.allowedEmails || []);
+        setPermittedEmails(data.permittedEmails || []);
       }
     } catch (err) {
       console.error("Failed to fetch institution data:", err);
@@ -103,11 +103,10 @@ export default function InstitutionAdminPage() {
 
     const updatedEmails = [...permittedEmails, newEmail];
     try {
-      const res = await fetch(`/api/institution/emails/${user?.institutionId}`, {
+      const res = await apiFetch(`/api/institution/emails/${user?.institutionId}`, {
         method: 'PUT',
         headers: { 
-          'Content-Type': 'application/json',
-          'x-user-uid': user?.uid || ''
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ emails: updatedEmails })
       });
@@ -123,11 +122,10 @@ export default function InstitutionAdminPage() {
   const handleRemoveEmail = async (email: string) => {
     const updatedEmails = permittedEmails.filter(e => e !== email);
     try {
-      const res = await fetch(`/api/institution/emails/${user?.institutionId}`, {
+      const res = await apiFetch(`/api/institution/emails/${user?.institutionId}`, {
         method: 'PUT',
         headers: { 
-          'Content-Type': 'application/json',
-          'x-user-uid': user?.uid || ''
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ emails: updatedEmails })
       });
@@ -141,9 +139,8 @@ export default function InstitutionAdminPage() {
 
   const handleRemoveRecommendation = async (courseId: string) => {
     try {
-      const res = await fetch(`/api/recommendations/${user?.institutionId}/${courseId}`, {
-        method: 'DELETE',
-        headers: { 'x-user-uid': user?.uid || '' }
+      const res = await apiFetch(`/api/recommendations/${user?.institutionId}/${courseId}`, {
+        method: 'DELETE'
       });
       if (res.ok) {
         setRecommendations(recommendations.filter(r => r._id !== courseId));
@@ -155,11 +152,10 @@ export default function InstitutionAdminPage() {
 
   const handleAddRecommendation = async (courseId: string) => {
     try {
-      const res = await fetch(`/api/recommendations`, {
+      const res = await apiFetch(`/api/recommendations`, {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json',
-          'x-user-uid': user?.uid || ''
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ 
           institutionId: user?.institutionId,

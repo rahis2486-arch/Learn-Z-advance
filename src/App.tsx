@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "./lib/utils";
+import { apiFetch } from "./lib/api";
 import ClassroomPage from "./pages/ClassroomPage";
 import AssistantPage from "./pages/AssistantPage";
 import LandingPage from "./pages/LandingPage";
@@ -324,7 +325,7 @@ function AppContent({ isSidebarOpen, setIsOpen }: { isSidebarOpen: boolean, setI
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const res = await fetch("/api/health");
+        const res = await apiFetch("/api/health");
         const data = await res.json();
         setDbStatus(data.database === "connected" ? "connected" : "disconnected");
       } catch (err) {
