@@ -6,9 +6,14 @@ import {
   FileText, Link as LinkIcon, ChevronRight,
   PlusCircle, CheckCircle2, Upload, Loader2,
   ChevronLeft, Users, Shield, UserX, UserCheck,
-  Search, Filter, MoreVertical, Building2, Tag
+  Search, Filter, MoreVertical, Building2, Tag,
+  BarChart3, TrendingUp, PieChart, Target, Award
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+  LineChart, Line, AreaChart, Area
+} from 'recharts';
 import { cn } from "../lib/utils";
 import { useAuth } from "../contexts/AuthContext";
 import { useAssistant } from "../contexts/AssistantContext";
@@ -134,7 +139,7 @@ export default function AdminPage() {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const { theme } = useAssistant();
-  const [activeTab, setActiveTab] = useState<"courses" | "users" | "institutions" | "categories">("courses");
+  const [activeTab, setActiveTab] = useState<"courses" | "users" | "institutions" | "categories" | "analytics">("courses");
   const [courses, setCourses] = useState<Course[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
@@ -145,6 +150,61 @@ export default function AdminPage() {
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [loading, setLoading] = useState(true);
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const [analyticsRange, setAnalyticsRange] = useState("30");
+  const [analyticsInterval, setAnalyticsInterval] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
+  const [topCourseFilter, setTopCourseFilter] = useState<"enrollment" | "rating" | "engagement">("enrollment");
+  const [institutionSearch, setInstitutionSearch] = useState("");
+  const [selectedInstAnalytics, setSelectedInstAnalytics] = useState<any>(null);
+  const [isInstAnalyticsLoading, setIsInstAnalyticsLoading] = useState(false);
+  const [comparisonData, setComparisonData] = useState<any[]>([]);
+
+  const fetchAnalytics = useCallback(async () => {
+    setIsAnalyticsLoading(true);
+    try {
+      const [analyticsRes, comparisonRes] = await Promise.all([
+        fetch(`/api/admin/analytics?range=${analyticsRange}&interval=${analyticsInterval}`, {
+          headers: { 'x-user-uid': currentUser?.uid || '' }
+        }),
+        fetch(`/api/admin/analytics/institutions-comparison`, {
+          headers: { 'x-user-uid': currentUser?.uid || '' }
+        })
+      ]);
+      
+      const data = await analyticsRes.json();
+      const comparison = await comparisonRes.json();
+      
+      setAnalyticsData(data);
+      setComparisonData(comparison);
+    } catch (error) {
+      console.error("Failed to fetch analytics:", error);
+    } finally {
+      setIsAnalyticsLoading(false);
+    }
+  }, [currentUser?.uid, analyticsRange, analyticsInterval]);
+
+  const fetchInstitutionAnalytics = async (instId: string) => {
+    setIsInstAnalyticsLoading(true);
+    try {
+      const res = await fetch(`/api/admin/analytics/institution/${instId}`, {
+        headers: { 'x-user-uid': currentUser?.uid || '' }
+      });
+      const data = await res.json();
+      setSelectedInstAnalytics(data);
+    } catch (error) {
+      console.error("Failed to fetch institution analytics:", error);
+    } finally {
+      setIsInstAnalyticsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'analytics') {
+      fetchAnalytics();
+      fetchInstitutions();
+    }
+  }, [activeTab, fetchAnalytics]);
   
   const [isEditingCourse, setIsEditingCourse] = useState(false);
   const [courseForm, setCourseForm] = useState({ title: "", description: "", thumbnail: "", duration: "", tags: "", category: "" });
@@ -685,6 +745,16 @@ export default function AdminPage() {
             <Tag size={18} />
             <span className="font-bold text-sm">Category Management</span>
           </button>
+          <button 
+            onClick={() => setActiveTab("analytics")}
+            className={cn(
+              "w-full flex items-center gap-3 p-3 rounded-xl transition-all",
+              activeTab === "analytics" ? "bg-theme-accent/10 text-theme-accent" : "text-theme-text/40 hover:bg-theme-text/5"
+            )}
+          >
+            <BarChart3 size={18} />
+            <span className="font-bold text-sm">Platform Analytics</span>
+          </button>
         </div>
 
         {activeTab === "courses" && (
@@ -1076,6 +1146,463 @@ export default function AdminPage() {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+            </motion.div>
+          ) : activeTab === "analytics" ? (
+            <motion.div
+              key="analytics-view"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8 pb-20"
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-3xl font-black tracking-tight">Platform Analytics</h2>
+                  <p className="text-theme-text/40">Real-time overview of Learn-Z platform and institutional performance.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Custom Filter Dropdown */}
+                  <div className="relative group">
+                    <div className="flex items-center gap-2 px-4 py-2 bg-theme-card border border-theme-border rounded-xl text-xs font-bold text-theme-text/60 hover:bg-theme-text/5 transition-colors cursor-pointer">
+                      <Filter size={14} />
+                      <span>
+                        {analyticsRange === "7" ? "Last Week" : 
+                         analyticsRange === "60" ? "Last 60 Days" : 
+                         analyticsRange === "90" ? "Last 90 Days" : 
+                         analyticsRange === "365" ? "Last 365 Days" : "Last 30 Days"}
+                        {analyticsInterval !== "daily" && ` (${analyticsInterval.charAt(0).toUpperCase() + analyticsInterval.slice(1)})`}
+                      </span>
+                    </div>
+                    <div className="absolute right-0 top-full mt-2 w-56 bg-theme-card border border-theme-border rounded-2xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-2 space-y-1">
+                      {[
+                        { label: "Last Week (Daily)", range: "7", interval: "daily" },
+                        { label: "Last 30 Days (Daily)", range: "30", interval: "daily" },
+                        { label: "Last 60 Days (Daily)", range: "60", interval: "daily" },
+                        { label: "Last 90 Days (Weekly)", range: "90", interval: "weekly" },
+                        { label: "Last 365 Days (Monthly)", range: "365", interval: "monthly" },
+                      ].map((opt) => (
+                        <button
+                          key={opt.label}
+                          onClick={() => {
+                            setAnalyticsRange(opt.range);
+                            setAnalyticsInterval(opt.interval as any);
+                          }}
+                          className={cn(
+                            "w-full text-left px-4 py-2 rounded-xl text-xs font-bold transition-colors",
+                            analyticsRange === opt.range && analyticsInterval === opt.interval
+                              ? "bg-theme-accent text-white"
+                              : "hover:bg-theme-text/5 text-theme-text/60"
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={fetchAnalytics}
+                    disabled={isAnalyticsLoading}
+                    className="p-2 hover:bg-theme-accent/10 rounded-xl text-theme-accent transition-colors disabled:opacity-50"
+                  >
+                    <Loader2 size={20} className={cn(isAnalyticsLoading && "animate-spin")} />
+                  </button>
+                </div>
+              </div>
+
+              {analyticsData ? (
+                <div className="space-y-8">
+                  {/* Personal Analytics Summary */}
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-black uppercase tracking-widest text-theme-text/40 flex items-center gap-2">
+                      <LayoutDashboard size={14} /> Platform Overview
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                      {[
+                        { label: "Total Courses", value: analyticsData.metrics.totalCourses, icon: BookOpen, color: "text-blue-500", bg: "bg-blue-500/10" },
+                        { label: "Total Enrollments", value: analyticsData.metrics.totalEnrollments, icon: TrendingUp, color: "text-emerald-500", bg: "bg-emerald-500/10" },
+                        { label: "Unique Students", value: analyticsData.metrics.uniqueStudents, icon: Users, color: "text-purple-500", bg: "bg-purple-500/10" },
+                        { label: "Completed Courses", value: analyticsData.metrics.completedCourses, icon: CheckCircle2, color: "text-amber-500", bg: "bg-amber-500/10" },
+                      ].map((stat, i) => (
+                        <motion.div
+                          key={stat.label}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.1 }}
+                          className="bg-theme-card border border-theme-border rounded-[32px] p-6 space-y-4 shadow-sm"
+                        >
+                          <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center", stat.bg, stat.color)}>
+                            <stat.icon size={24} />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">{stat.label}</p>
+                            <h3 className="text-3xl font-black mt-1">{stat.value.toLocaleString()}</h3>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Institutional Analytics Summary */}
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-black uppercase tracking-widest text-theme-text/40 flex items-center gap-2">
+                      <Building2 size={14} /> Institutional Insights
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                      {[
+                        { label: "Recommended Courses", value: analyticsData.metrics.totalInstitutionalCourses, icon: Award, color: "text-indigo-500", bg: "bg-indigo-500/10" },
+                        { label: "Inst. Enrollments", value: analyticsData.metrics.totalInstitutionalEnrollments, icon: TrendingUp, color: "text-rose-500", bg: "bg-rose-500/10" },
+                        { label: "Inst. Students", value: analyticsData.metrics.totalInstitutionalStudents, icon: Users, color: "text-cyan-500", bg: "bg-cyan-500/10" },
+                        { label: "Completion Rate", value: `${analyticsData.metrics.institutionalCompletionRate.toFixed(1)}%`, icon: Target, color: "text-orange-500", bg: "bg-orange-500/10" },
+                      ].map((stat, i) => (
+                        <motion.div
+                          key={stat.label}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: (i + 4) * 0.1 }}
+                          className="bg-theme-card border border-theme-border rounded-[32px] p-6 space-y-4 shadow-sm"
+                        >
+                          <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center", stat.bg, stat.color)}>
+                            <stat.icon size={24} />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">{stat.label}</p>
+                            <h3 className="text-3xl font-black mt-1">{stat.value}</h3>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Enrollment Trend Graph */}
+                    <div className="bg-theme-card border border-theme-border rounded-[32px] p-8 shadow-sm">
+                      <div className="flex items-center justify-between mb-8">
+                        <h3 className="text-xl font-bold flex items-center gap-2">
+                          <TrendingUp size={20} className="text-theme-accent" />
+                          Enrollment Trend
+                        </h3>
+                      </div>
+                      <div className="h-[300px] w-full">
+                        {analyticsData.trendData.length > 0 ? (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={analyticsData.trendData}>
+                              <defs>
+                                <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="var(--theme-accent)" stopOpacity={0.3}/>
+                                  <stop offset="95%" stopColor="var(--theme-accent)" stopOpacity={0}/>
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(var(--theme-text-rgb), 0.05)" />
+                              <XAxis 
+                                dataKey="date" 
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fontSize: 10, fill: 'currentColor', opacity: 0.4 }}
+                                dy={10}
+                              />
+                              <YAxis 
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fontSize: 10, fill: 'currentColor', opacity: 0.4 }}
+                              />
+                              <Tooltip 
+                                contentStyle={{ 
+                                  backgroundColor: 'var(--theme-card)', 
+                                  borderColor: 'var(--theme-border)',
+                                  borderRadius: '16px',
+                                  fontSize: '12px',
+                                  fontWeight: 'bold'
+                                }}
+                              />
+                              <Area 
+                                type="monotone" 
+                                dataKey="count" 
+                                stroke="var(--theme-accent)" 
+                                strokeWidth={3}
+                                fillOpacity={1} 
+                                fill="url(#colorCount)" 
+                              />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          <div className="h-full flex flex-col items-center justify-center text-theme-text/20">
+                            <TrendingUp size={48} />
+                            <p className="mt-2 font-bold">No enrollment data available yet</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Institution Comparison Bar Chart */}
+                    <div className="bg-theme-card border border-theme-border rounded-[32px] p-8 shadow-sm">
+                      <div className="flex items-center justify-between mb-8">
+                        <h3 className="text-xl font-bold flex items-center gap-2">
+                          <BarChart3 size={20} className="text-indigo-500" />
+                          Institution Comparison
+                        </h3>
+                      </div>
+                      <div className="h-[300px] w-full">
+                        {comparisonData.length > 0 ? (
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={comparisonData}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(var(--theme-text-rgb), 0.05)" />
+                              <XAxis 
+                                dataKey="name" 
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fontSize: 10, fill: 'currentColor', opacity: 0.4 }}
+                                dy={10}
+                              />
+                              <YAxis 
+                                axisLine={false}
+                                tickLine={false}
+                                tick={{ fontSize: 10, fill: 'currentColor', opacity: 0.4 }}
+                              />
+                              <Tooltip 
+                                contentStyle={{ 
+                                  backgroundColor: 'var(--theme-card)', 
+                                  borderColor: 'var(--theme-border)',
+                                  borderRadius: '16px',
+                                  fontSize: '12px',
+                                  fontWeight: 'bold'
+                                }}
+                              />
+                              <Bar 
+                                dataKey="count" 
+                                fill="var(--theme-accent)" 
+                                radius={[8, 8, 0, 0]}
+                                barSize={40}
+                              />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        ) : (
+                          <div className="h-full flex flex-col items-center justify-center text-theme-text/20">
+                            <Building2 size={48} />
+                            <p className="mt-2 font-bold">No institutional data to compare</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Unified Top Courses Section */}
+                  <div className="bg-theme-card border border-theme-border rounded-[32px] p-8 shadow-sm">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
+                      <h3 className="text-xl font-bold flex items-center gap-2">
+                        <Award size={20} className="text-theme-accent" />
+                        Top Performing Courses
+                      </h3>
+                      <div className="flex items-center bg-theme-bg p-1 rounded-2xl border border-theme-border">
+                        {[
+                          { id: "enrollment", label: "Enrollment", icon: TrendingUp },
+                          { id: "rating", label: "Rating", icon: Target },
+                          { id: "engagement", label: "Engagement", icon: Award },
+                        ].map((filter) => (
+                          <button
+                            key={filter.id}
+                            onClick={() => setTopCourseFilter(filter.id as any)}
+                            className={cn(
+                              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all",
+                              topCourseFilter === filter.id
+                                ? "bg-theme-card text-theme-accent shadow-sm"
+                                : "text-theme-text/40 hover:text-theme-text/60"
+                            )}
+                          >
+                            <filter.icon size={14} />
+                            {filter.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {(topCourseFilter === 'enrollment' ? analyticsData.topEnrollments : 
+                        topCourseFilter === 'rating' ? analyticsData.topRatings : 
+                        analyticsData.topEngagement).map((course: any, i: number) => (
+                        <div key={course._id} className="flex items-center gap-4 p-4 bg-theme-bg/50 border border-theme-border rounded-2xl hover:border-theme-accent/50 transition-all group">
+                          <div className="w-10 h-10 rounded-xl bg-theme-card border border-theme-border flex items-center justify-center text-sm font-black text-theme-text/20 group-hover:text-theme-accent transition-colors">
+                            {i + 1}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold truncate text-sm">{course.title}</p>
+                            <div className="flex items-center gap-3 mt-1">
+                              {topCourseFilter === 'enrollment' ? (
+                                <p className="text-[10px] text-theme-text/40 font-black uppercase tracking-widest">{course.count} Enrollments</p>
+                              ) : topCourseFilter === 'rating' ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-0.5">
+                                    {[...Array(5)].map((_, star) => (
+                                      <div 
+                                        key={star} 
+                                        className={cn(
+                                          "w-1.5 h-1.5 rounded-full",
+                                          star < Math.round(course.avgRating) ? "bg-amber-500" : "bg-theme-text/10"
+                                        )} 
+                                      />
+                                    ))}
+                                  </div>
+                                  <span className="text-[10px] font-black text-amber-500">{course.avgRating.toFixed(1)}</span>
+                                </div>
+                              ) : (
+                                <p className="text-[10px] text-theme-text/40 font-black uppercase tracking-widest">{course.avgEngagement.toFixed(1)}% Engagement</p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="h-1.5 w-24 bg-theme-bg rounded-full overflow-hidden">
+                            <div 
+                              className={cn(
+                                "h-full transition-all duration-500",
+                                topCourseFilter === 'enrollment' ? "bg-emerald-500" : 
+                                topCourseFilter === 'rating' ? "bg-amber-500" : "bg-purple-500"
+                              )} 
+                              style={{ 
+                                width: `${
+                                  topCourseFilter === 'enrollment' ? (course.count / (analyticsData.topEnrollments[0]?.count || 1)) * 100 :
+                                  topCourseFilter === 'rating' ? (course.avgRating / 5) * 100 :
+                                  course.avgEngagement
+                                }%` 
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Institution-Wise Analytics Section */}
+                  <div className="bg-theme-card border border-theme-border rounded-[32px] p-8 shadow-sm space-y-8">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                      <div>
+                        <h3 className="text-xl font-bold flex items-center gap-2">
+                          <Building2 size={20} className="text-indigo-500" />
+                          Institution-Wise Analytics
+                        </h3>
+                        <p className="text-sm text-theme-text/40">Drill down into specific institutional performance.</p>
+                      </div>
+                      <div className="relative w-full md:w-72">
+                        <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-theme-text/20" />
+                        <input
+                          type="text"
+                          value={institutionSearch}
+                          onChange={(e) => setInstitutionSearch(e.target.value)}
+                          placeholder="Search institutions..."
+                          className="w-full pl-12 pr-4 py-3 bg-theme-bg border border-theme-border rounded-xl focus:ring-2 focus:ring-theme-accent/50 outline-none text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {institutions
+                        .filter(inst => inst.name.toLowerCase().includes(institutionSearch.toLowerCase()))
+                        .slice(0, 6)
+                        .map(inst => (
+                        <button
+                          key={inst._id}
+                          onClick={() => fetchInstitutionAnalytics(inst._id)}
+                          className={cn(
+                            "flex items-center justify-between p-4 rounded-2xl border transition-all text-left",
+                            selectedInstAnalytics?.institution?._id === inst._id
+                              ? "bg-theme-accent/5 border-theme-accent shadow-sm"
+                              : "bg-theme-bg/50 border-theme-border hover:border-theme-accent/30"
+                          )}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-theme-card border border-theme-border flex items-center justify-center text-theme-accent">
+                              <Building2 size={20} />
+                            </div>
+                            <div>
+                              <p className="font-bold text-sm">{inst.name}</p>
+                              <p className="text-[10px] text-theme-text/40 font-black uppercase tracking-widest">{inst.location || "Global"}</p>
+                            </div>
+                          </div>
+                          <ChevronRight size={16} className="text-theme-text/20" />
+                        </button>
+                      ))}
+                    </div>
+
+                    <AnimatePresence mode="wait">
+                      {isInstAnalyticsLoading ? (
+                        <motion.div 
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="h-64 flex flex-col items-center justify-center text-theme-text/20"
+                        >
+                          <Loader2 size={48} className="animate-spin" />
+                          <p className="mt-4 font-bold">Fetching institution data...</p>
+                        </motion.div>
+                      ) : selectedInstAnalytics ? (
+                        <motion.div
+                          key={selectedInstAnalytics.institution._id}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -20 }}
+                          className="pt-8 border-t border-theme-border space-y-8"
+                        >
+                          <div className="flex items-center gap-4">
+                            <div className="w-16 h-16 rounded-[24px] bg-theme-accent/10 flex items-center justify-center text-theme-accent">
+                              <Building2 size={32} />
+                            </div>
+                            <div>
+                              <h4 className="text-2xl font-black">{selectedInstAnalytics.institution.name}</h4>
+                              <p className="text-theme-text/40 font-bold">{selectedInstAnalytics.institution.location || "Global Institution"}</p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {[
+                              { label: "Students", value: selectedInstAnalytics.metrics.totalStudents, icon: Users, color: "text-blue-500" },
+                              { label: "Recommended", value: selectedInstAnalytics.metrics.recommendedCourses, icon: Award, color: "text-indigo-500" },
+                              { label: "Enrollments", value: selectedInstAnalytics.metrics.totalEnrollments, icon: TrendingUp, color: "text-emerald-500" },
+                              { label: "Completion", value: `${selectedInstAnalytics.metrics.completionRate.toFixed(1)}%`, icon: Target, color: "text-orange-500" },
+                            ].map((stat) => (
+                              <div key={stat.label} className="bg-theme-bg/50 border border-theme-border rounded-2xl p-4 flex items-center gap-4">
+                                <div className={cn("w-10 h-10 rounded-xl bg-theme-card border border-theme-border flex items-center justify-center", stat.color)}>
+                                  <stat.icon size={20} />
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-theme-text/40">{stat.label}</p>
+                                  <p className="text-lg font-black">{stat.value}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="h-[200px] w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <AreaChart data={selectedInstAnalytics.trendData}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(var(--theme-text-rgb), 0.05)" />
+                                <XAxis dataKey="date" hide />
+                                <YAxis hide />
+                                <Tooltip 
+                                  contentStyle={{ 
+                                    backgroundColor: 'var(--theme-card)', 
+                                    borderColor: 'var(--theme-border)',
+                                    borderRadius: '12px',
+                                    fontSize: '10px'
+                                  }}
+                                />
+                                <Area type="monotone" dataKey="count" stroke="var(--theme-accent)" fill="var(--theme-accent)" fillOpacity={0.1} strokeWidth={2} />
+                              </AreaChart>
+                            </ResponsiveContainer>
+                            <p className="text-center text-[10px] font-black uppercase tracking-widest text-theme-text/20 mt-2">30-Day Enrollment Trend</p>
+                          </div>
+                        </motion.div>
+                      ) : (
+                        <div className="h-64 flex flex-col items-center justify-center text-theme-text/10 border-2 border-dashed border-theme-border rounded-[32px]">
+                          <Building2 size={48} />
+                          <p className="mt-4 font-bold">Select an institution to view detailed analytics</p>
+                        </div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-[400px] flex flex-col items-center justify-center text-theme-text/20">
+                  <PieChart size={64} className="animate-pulse" />
+                  <p className="mt-4 font-bold">Synthesizing platform data...</p>
                 </div>
               )}
             </motion.div>

@@ -23,6 +23,7 @@ interface DashboardStats {
     retentionRate: number;
     engagementScore: number;
     quizPerformance: number;
+    source: string;
   }[];
   activityHistory: {
     date: string;
@@ -36,6 +37,7 @@ interface DashboardStats {
     completedLessons: number;
     totalQuizzes: number;
     isCompleted: boolean;
+    source: string;
     finalTest?: {
       score: number;
       totalQuestions: number;
@@ -55,6 +57,7 @@ interface DashboardStats {
     score: number;
     totalQuestions: number;
     percentage: number;
+    source: string;
     feedback: {
       strengths: string[];
       weaknesses: string[];
@@ -67,8 +70,10 @@ interface DashboardStats {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [personalStats, setPersonalStats] = useState<DashboardStats | null>(null);
+  const [institutionStats, setInstitutionStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [dashboardSource, setDashboardSource] = useState<'personal' | 'institution'>('personal');
   const [activeTab, setActiveTab] = useState<'overview' | 'results' | 'feedback' | 'retention'>('overview');
   const [selectedCourse, setSelectedCourse] = useState<DashboardStats['courseScores'][0] | null>(null);
 
@@ -76,10 +81,15 @@ export default function DashboardPage() {
     const fetchStats = async () => {
       if (!user) return;
       try {
-        const res = await fetch(`/api/dashboard/stats/${user.uid}`);
+        setLoading(true);
+        const res = await fetch(`/api/dashboard/stats/${user.uid}?source=${dashboardSource}`);
         if (res.ok) {
           const data = await res.json();
-          setStats(data);
+          if (dashboardSource === 'institution') {
+            setInstitutionStats(data);
+          } else {
+            setPersonalStats(data);
+          }
         }
       } catch (err) {
         console.error("Failed to fetch dashboard stats:", err);
@@ -88,9 +98,11 @@ export default function DashboardPage() {
       }
     };
     fetchStats();
-  }, [user]);
+  }, [user, dashboardSource]);
 
-  if (loading) {
+  const stats = dashboardSource === 'institution' ? institutionStats : personalStats;
+
+  if (loading && !stats) {
     return (
       <div className="h-full flex items-center justify-center bg-theme-bg">
         <div className="w-12 h-12 border-4 border-theme-accent/20 border-t-theme-accent rounded-full animate-spin" />
@@ -108,32 +120,67 @@ export default function DashboardPage() {
 
   return (
     <div className="p-6 lg:p-10 max-w-7xl mx-auto space-y-10">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
         <div className="space-y-2">
           <div className="flex items-center gap-3 text-theme-accent">
             <LayoutDashboard size={24} />
-            <h1 className="text-3xl font-bold tracking-tight text-theme-text">Student Dashboard</h1>
+            <h1 className="text-3xl font-bold tracking-tight text-theme-text">
+              {dashboardSource === 'institution' ? 'Institutional Dashboard' : 'Personal Dashboard'}
+            </h1>
           </div>
           <p className="text-theme-text-muted">
-            Track your learning journey, analyze your performance, and get AI-powered feedback.
+            {dashboardSource === 'institution' 
+              ? 'Track your progress in courses recommended by your institution.'
+              : 'Track your personal learning journey and analyze your performance.'}
           </p>
         </div>
 
-        <div className="flex items-center gap-2 bg-theme-card p-1 rounded-2xl border border-theme-border">
-          {(['overview', 'results', 'feedback', 'retention'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={cn(
-                "px-6 py-2 rounded-xl text-sm font-bold capitalize transition-all",
-                activeTab === tab 
-                  ? "bg-theme-accent text-theme-bg" 
-                  : "text-theme-text-muted hover:text-theme-text hover:bg-theme-text/5"
-              )}
-            >
-              {tab}
-            </button>
-          ))}
+        <div className="flex flex-col sm:flex-row gap-4">
+          {/* Main Dashboard Source Tabs */}
+          {user?.loginType === 'institutional' && (
+            <div className="flex items-center gap-2 bg-theme-accent/5 p-1 rounded-2xl border border-theme-accent/10">
+              <button
+                onClick={() => setDashboardSource('personal')}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                  dashboardSource === 'personal' 
+                    ? "bg-theme-accent text-theme-bg" 
+                    : "text-theme-accent/60 hover:text-theme-accent hover:bg-theme-accent/5"
+                )}
+              >
+                Personal
+              </button>
+              <button
+                onClick={() => setDashboardSource('institution')}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                  dashboardSource === 'institution' 
+                    ? "bg-theme-accent text-theme-bg" 
+                    : "text-theme-accent/60 hover:text-theme-accent hover:bg-theme-accent/5"
+                )}
+              >
+                Institutional
+              </button>
+            </div>
+          )}
+
+          {/* Sub-tabs */}
+          <div className="flex items-center gap-2 bg-theme-card p-1 rounded-2xl border border-theme-border">
+            {(['overview', 'results', 'feedback', 'retention'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-xs font-bold capitalize transition-all",
+                  activeTab === tab 
+                    ? "bg-theme-accent text-theme-bg" 
+                    : "text-theme-text-muted hover:text-theme-text hover:bg-theme-text/5"
+                )}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -156,7 +203,7 @@ export default function DashboardPage() {
               <card.icon size={24} />
             </div>
             <div>
-              <p className="text-xs font-black uppercase tracking-widest text-theme-text-muted">{card.label}</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-theme-text-muted">{card.label}</p>
               <p className="text-2xl font-bold text-theme-text">{card.value}</p>
             </div>
           </motion.div>
@@ -166,7 +213,7 @@ export default function DashboardPage() {
       <AnimatePresence mode="wait">
         {activeTab === 'overview' && (
           <motion.div
-            key="overview"
+            key={`${dashboardSource}-overview`}
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
@@ -279,7 +326,7 @@ export default function DashboardPage() {
               <div className="space-y-4">
                 {stats.courseScores.map((course) => (
                   <button 
-                    key={course.id} 
+                    key={`${course.source}_${course.id}`} 
                     onClick={() => setSelectedCourse(course)}
                     className="w-full text-left p-4 bg-theme-bg/50 rounded-2xl border border-theme-border/50 flex items-center justify-between hover:border-theme-accent transition-colors"
                   >
@@ -307,7 +354,7 @@ export default function DashboardPage() {
 
         {activeTab === 'retention' && (
           <motion.div
-            key="retention"
+            key={`${dashboardSource}-retention`}
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
@@ -337,7 +384,7 @@ export default function DashboardPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {stats.retentionMetrics.map((m) => (
-                <div key={m.courseId} className="bg-theme-card border border-theme-border p-6 rounded-[32px] space-y-4">
+                <div key={`${m.source}_${m.courseId}`} className="bg-theme-card border border-theme-border p-6 rounded-[32px] space-y-4">
                   <h4 className="font-bold text-theme-text truncate">{m.title}</h4>
                   <div className="space-y-4">
                     <div>
@@ -367,7 +414,7 @@ export default function DashboardPage() {
 
         {activeTab === 'results' && (
           <motion.div
-            key="results"
+            key={`${dashboardSource}-results`}
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
@@ -375,7 +422,7 @@ export default function DashboardPage() {
           >
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {stats.lessonResults.map((result, i) => (
-                <div key={result.id} className="bg-theme-card border border-theme-border p-6 rounded-[32px] space-y-4">
+                <div key={`${result.source}_${result.id}`} className="bg-theme-card border border-theme-border p-6 rounded-[32px] space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="px-3 py-1 bg-theme-accent/10 text-theme-accent rounded-full text-[10px] font-black uppercase tracking-widest">
                       {result.courseTitle}
@@ -417,14 +464,14 @@ export default function DashboardPage() {
 
         {activeTab === 'feedback' && (
           <motion.div
-            key="feedback"
+            key={`${dashboardSource}-feedback`}
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
             className="space-y-8"
           >
             {stats.lessonResults.filter(r => r.feedback).map((result) => (
-              <div key={`${result.id}-feedback`} className="bg-theme-card border border-theme-border p-8 rounded-[32px] space-y-8">
+              <div key={`${result.source}_${result.id}-feedback`} className="bg-theme-card border border-theme-border p-8 rounded-[32px] space-y-8">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-theme-border pb-6">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">

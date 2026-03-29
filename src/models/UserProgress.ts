@@ -7,6 +7,7 @@ const UserProgressSchema = new mongoose.Schema({
   isCompleted: { type: Boolean, default: false },
   rating: { type: Number, default: 0 },
   enrollmentSource: { type: String, enum: ['personal', 'institution'], default: 'personal' },
+  enrolledAt: { type: Date, default: Date.now },
   lastAccessed: { type: Date, default: Date.now },
   courseSnapshot: {
     title: String,

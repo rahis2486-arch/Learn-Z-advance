@@ -322,6 +322,193 @@ async function startServer() {
     }
   });
 
+  app.get("/api/admin/analytics", isAdmin, async (req, res) => {
+    try {
+      const { range = '30', interval = 'daily' } = req.query;
+      const days = parseInt(range as string) || 30;
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+
+      // Backfill enrolledAt if missing (one-time fix logic)
+      await UserProgress.updateMany(
+        { enrolledAt: { $exists: false } },
+        { $set: { enrolledAt: new Date() } }
+      );
+
+      // 1. Core Metrics
+      const [
+        totalCourses, 
+        totalEnrollments, 
+        uniqueStudents, 
+        completedCourses,
+        totalInstitutionalCourses,
+        totalInstitutionalEnrollments,
+        totalInstitutionalStudents,
+        institutionalCompletedCourses
+      ] = await Promise.all([
+        Course.countDocuments(),
+        UserProgress.countDocuments(),
+        UserProgress.distinct('userId').then(ids => ids.length),
+        UserProgress.countDocuments({ isCompleted: true }),
+        Recommendation.distinct('courseId').then(ids => ids.length),
+        UserProgress.countDocuments({ enrollmentSource: 'institution' }),
+        UserProgress.distinct('userId', { enrollmentSource: 'institution' }).then(ids => ids.length),
+        UserProgress.countDocuments({ enrollmentSource: 'institution', isCompleted: true })
+      ]);
+
+      const institutionalCompletionRate = totalInstitutionalEnrollments > 0 
+        ? (institutionalCompletedCourses / totalInstitutionalEnrollments) * 100 
+        : 0;
+
+      // 2. Top 10 Courses by Enrollments
+      const topEnrollments = await UserProgress.aggregate([
+        { $group: { _id: "$courseId", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+        { $lookup: { from: "courses", localField: "_id", foreignField: "_id", as: "course" } },
+        { $unwind: "$course" },
+        { $project: { title: "$course.title", count: 1 } }
+      ]);
+
+      // 3. Top 10 Courses by Ratings
+      const topRatings = await UserProgress.aggregate([
+        { $match: { rating: { $gt: 0 } } },
+        { $group: { _id: "$courseId", avgRating: { $avg: "$rating" }, count: { $sum: 1 } } },
+        { $sort: { avgRating: -1, count: -1 } },
+        { $limit: 10 },
+        { $lookup: { from: "courses", localField: "_id", foreignField: "_id", as: "course" } },
+        { $unwind: "$course" },
+        { $project: { title: "$course.title", avgRating: 1, count: 1 } }
+      ]);
+
+      // 4. Top 10 Courses by Engagement (Average Progress)
+      const topEngagement = await UserProgress.aggregate([
+        { $match: { "videoProgress.0": { $exists: true } } },
+        { 
+          $project: { 
+            courseId: 1, 
+            avgProgress: { $avg: "$videoProgress.percentage" } 
+          } 
+        },
+        { $group: { _id: "$courseId", avgEngagement: { $avg: "$avgProgress" }, count: { $sum: 1 } } },
+        { $sort: { avgEngagement: -1 } },
+        { $limit: 10 },
+        { $lookup: { from: "courses", localField: "_id", foreignField: "_id", as: "course" } },
+        { $unwind: "$course" },
+        { $project: { title: "$course.title", avgEngagement: 1, count: 1 } }
+      ]);
+
+      // 5. Enrollment Trend
+      let format = "%Y-%m-%d";
+      if (interval === 'monthly') format = "%Y-%m";
+      else if (interval === 'weekly') format = "%Y-%U";
+
+      const trendData = await UserProgress.aggregate([
+        { $match: { enrolledAt: { $gte: startDate } } },
+        {
+          $group: {
+            _id: { $dateToString: { format, date: "$enrolledAt" } },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { "_id": 1 } }
+      ]);
+
+      res.json({
+        metrics: {
+          totalCourses,
+          totalEnrollments,
+          uniqueStudents,
+          completedCourses,
+          totalInstitutionalCourses,
+          totalInstitutionalEnrollments,
+          totalInstitutionalStudents,
+          institutionalCompletionRate
+        },
+        topEnrollments,
+        topRatings,
+        topEngagement,
+        trendData: trendData.map(d => ({ date: d._id, count: d.count }))
+      });
+    } catch (err) {
+      console.error("Admin analytics error:", err);
+      res.status(500).json({ error: "Failed to fetch analytics" });
+    }
+  });
+
+  app.get("/api/admin/analytics/institutions-comparison", isAdmin, async (req, res) => {
+    try {
+      const comparison = await UserProgress.aggregate([
+        { $match: { enrollmentSource: 'institution' } },
+        { $lookup: { from: "users", localField: "userId", foreignField: "uid", as: "user" } },
+        { $unwind: "$user" },
+        { $match: { "user.institutionId": { $exists: true, $ne: null } } },
+        { $group: { _id: "$user.institutionId", enrollmentCount: { $sum: 1 } } },
+        { $lookup: { from: "institutions", localField: "_id", foreignField: "_id", as: "institution" } },
+        { $unwind: "$institution" },
+        { $project: { name: "$institution.name", count: "$enrollmentCount" } },
+        { $sort: { count: -1 } },
+        { $limit: 10 }
+      ]);
+      res.json(comparison);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch comparison" });
+    }
+  });
+
+  app.get("/api/admin/analytics/institution/:id", isAdmin, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const institution = await Institution.findById(id);
+      if (!institution) return res.status(404).json({ error: "Institution not found" });
+
+      // Get all users belonging to this institution
+      const users = await User.find({ institutionId: id });
+      const userIds = users.map(u => u.uid);
+
+      const [
+        totalStudents,
+        recommendedCourses,
+        totalEnrollments,
+        completedEnrollments
+      ] = await Promise.all([
+        users.length,
+        Recommendation.countDocuments({ institutionId: id }),
+        UserProgress.countDocuments({ userId: { $in: userIds }, enrollmentSource: 'institution' }),
+        UserProgress.countDocuments({ userId: { $in: userIds }, enrollmentSource: 'institution', isCompleted: true })
+      ]);
+
+      const completionRate = totalEnrollments > 0 ? (completedEnrollments / totalEnrollments) * 100 : 0;
+
+      // Performance trend for this institution
+      const trendData = await UserProgress.aggregate([
+        { $match: { userId: { $in: userIds }, enrollmentSource: 'institution' } },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$enrolledAt" } },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { "_id": 1 } },
+        { $limit: 30 }
+      ]);
+
+      res.json({
+        institution,
+        metrics: {
+          totalStudents,
+          recommendedCourses,
+          totalEnrollments,
+          completionRate
+        },
+        trendData: trendData.map(d => ({ date: d._id, count: d.count }))
+      });
+    } catch (err) {
+      console.error("Institution analytics error:", err);
+      res.status(500).json({ error: "Failed to fetch institution analytics" });
+    }
+  });
+
   // Institution Management
   app.get("/api/institutions", async (req, res) => {
     try {
@@ -922,7 +1109,11 @@ async function startServer() {
   app.get("/api/dashboard/stats/:userId", async (req, res) => {
     try {
       const { userId } = req.params;
-      const progress = await (UserProgress as any).find({ userId }).populate('courseId');
+      const { source } = req.query;
+      const query: any = { userId };
+      if (source) query.enrollmentSource = source;
+      
+      const progress = await (UserProgress as any).find(query).populate('courseId');
       
       const stats = {
         totalEnrolled: progress.length,
@@ -943,7 +1134,8 @@ async function startServer() {
             title: p.courseId?.title || p.courseSnapshot?.title || "Unknown",
             retentionRate: (avgVideoCompletion * 0.4) + (avgQuizScore * 0.6),
             engagementScore: avgVideoCompletion,
-            quizPerformance: avgQuizScore
+            quizPerformance: avgQuizScore,
+            source: p.enrollmentSource
           };
         }),
 
@@ -971,7 +1163,8 @@ async function startServer() {
             completedLessons: p.completedLessons.length,
             totalQuizzes: p.lessonQuizzes.length,
             isCompleted: p.isCompleted,
-            finalTest: p.finalTest
+            finalTest: p.finalTest,
+            source: p.enrollmentSource
           };
         }),
 
@@ -986,7 +1179,8 @@ async function startServer() {
             percentage: (q.score / q.totalQuestions) * 100,
             feedback: q.feedback,
             completed: q.completed,
-            attempts: q.attempts
+            attempts: q.attempts,
+            source: p.enrollmentSource
           }))
         )
       };
