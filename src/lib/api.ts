@@ -6,7 +6,9 @@ export const apiFetch = async (input: RequestInfo | URL, init?: RequestInit) => 
   
   const newInit = { ...init };
   
-  if (url.startsWith('/api')) {
+  const isApiRoute = url.startsWith('/api') || url.startsWith(`${window.location.origin}/api`);
+  
+  if (isApiRoute) {
     const currentUser = auth.currentUser;
     if (currentUser) {
       if (newInit.headers instanceof Headers) {

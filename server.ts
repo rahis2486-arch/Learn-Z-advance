@@ -264,7 +264,8 @@ async function startServer() {
       
       if (!user) {
         // First time login - check if this is the default admin
-        const isDefaultAdmin = email === "rahis2486@gmail.com";
+        const adminEmails = ["rahis2486@gmail.com", "malangcode510@gmail.com"];
+        const isDefaultAdmin = adminEmails.includes(email);
         
         // Generate unique username from email
         let baseUsername = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -325,7 +326,8 @@ async function startServer() {
         }
 
         // Ensure default admin always keeps admin role
-        if (email === "rahis2486@gmail.com") {
+        const adminEmails = ["rahis2486@gmail.com", "malangcode510@gmail.com"];
+        if (adminEmails.includes(email)) {
           user.role = 'admin';
         }
 
@@ -387,7 +389,8 @@ async function startServer() {
       if (!user) return res.status(404).json({ error: "User not found" });
       
       // Prevent deleting the main admin
-      if (user.email === 'rahis2486@gmail.com') {
+      const adminEmails = ["rahis2486@gmail.com", "malangcode510@gmail.com"];
+      if (adminEmails.includes(user.email)) {
         return res.status(403).json({ error: "Cannot delete the main administrator account." });
       }
 
@@ -413,16 +416,13 @@ async function startServer() {
   // DANGER: Delete all users except main admin
   app.delete("/api/admin/users-cleanup", isAdmin, async (req, res) => {
     try {
-      const mainAdminEmail = 'rahis2486@gmail.com';
-      const mainAdmin = await User.findOne({ email: mainAdminEmail });
+      const adminEmails = ["rahis2486@gmail.com", "malangcode510@gmail.com"];
       
-      if (!mainAdmin) return res.status(404).json({ error: "Main administrator account not found." });
-
-      const usersToDelete = await User.find({ email: { $ne: mainAdminEmail } });
+      const usersToDelete = await User.find({ email: { $nin: adminEmails } });
       const uidsToDelete = usersToDelete.map(u => u.uid);
 
       await Promise.all([
-        User.deleteMany({ email: { $ne: mainAdminEmail } }),
+        User.deleteMany({ email: { $nin: adminEmails } }),
         UserProgress.deleteMany({ userId: { $in: uidsToDelete } }),
         Memory.deleteMany({ userId: { $in: uidsToDelete } }),
         Summary.deleteMany({ userId: { $in: uidsToDelete } }),
